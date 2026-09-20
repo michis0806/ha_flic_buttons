@@ -2,11 +2,13 @@
 
 The upstream connection helper imposes a 20-second service-discovery timeout.
 Use the same Bleak transport with an explicit timeout, without changing global
-Bluetooth settings. Protocol handling remains in the pinned upstream library.
+Bluetooth settings. Protocol handling remains in the pinned upstream library,
+apart from correcting its Flic 2/Duo auto-disconnect field before signing.
 
 Connection initialization adapted from pyflic-ble (Shortcut Labs), Apache-2.0.
 See LICENSE.pyflic-ble. Local changes: bounded connection stages, cleanup on
 failure/cancellation, and suppression of reconnects during initial pairing.
+The init-event packet correction is local to this integration, not a global patch.
 """
 
 import asyncio
@@ -19,14 +21,24 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     close_stale_connections_by_address,
 )
+from pyflic_ble import DeviceType, FlicProtocolError
 from pyflic_ble import FlicClient as BaseFlicClient
-from pyflic_ble import FlicProtocolError
 from pyflic_ble.client import SessionState
+from pyflic_ble.const import (
+    OPCODE_INIT_BUTTON_EVENTS_DUO_REQUEST,
+    OPCODE_INIT_BUTTON_EVENTS_REQUEST,
+)
 
 _LOGGER = logging.getLogger(__name__)
 CONNECT_TIMEOUT = 60
 NOTIFY_TIMEOUT = 15
 CLEANUP_TIMEOUT = 10
+# Pinned pyflic-ble 0.2.5 layouts: opcode and byte offset of the packed field.
+# Includes the one-byte frame header. Twist has a different protocol.
+_INIT_EVENT_LAYOUTS = {
+    DeviceType.FLIC2: (OPCODE_INIT_BUTTON_EVENTS_REQUEST, 10),
+    DeviceType.DUO: (OPCODE_INIT_BUTTON_EVENTS_DUO_REQUEST, 14),
+}
 
 
 class FlicClient(BaseFlicClient):
@@ -37,6 +49,27 @@ class FlicClient(BaseFlicClient):
         self._pairing_only = pairing_only
         self._connecting = False
         self._connect_lock = asyncio.Lock()
+
+    async def _write_packet(self, data: bytes, authenticated: bool = True) -> None:
+        """Disable idle disconnect in Flic 2/Duo init packets before MAC signing.
+
+        pyflic-ble 0.2.5 sends zero, but the protocol specifies 511 (all nine
+        bits set) for disabled auto-disconnect. Preserve all adjacent fields,
+        other commands, pairing packets and the entire Twist protocol.
+        https://github.com/50ButtonsEach/flic2-documentation/wiki/
+        Flic-2-Protocol-Specification#init-button-events
+        """
+        layout = _INIT_EVENT_LAYOUTS.get(self.device_type)
+        if authenticated and layout is not None and len(data) >= 2:
+            opcode, offset = layout
+            if data[1] == opcode:
+                if len(data) != offset + 8:
+                    raise FlicProtocolError("Unexpected init-event packet layout")
+                packet = bytearray(data)
+                packet[offset] = 0xFF
+                packet[offset + 1] |= 0x01
+                data = bytes(packet)
+        await super()._write_packet(data, authenticated)
 
     def _schedule_reconnect(self) -> None:
         if self._pairing_only or self._connecting or self._stopped:

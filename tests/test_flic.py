@@ -6,6 +6,7 @@ Run with Python 3.14 and the repository's requirements-test.txt.
 
 import asyncio
 import importlib
+import struct
 import sys
 import types
 from pathlib import Path
@@ -18,6 +19,8 @@ from bleak import BleakError
 from bleak.backends.device import BLEDevice
 from pyflic_ble import DeviceType, FlicAuthenticationError, FlicPairingError
 from pyflic_ble.client import FlicProtocolError, SessionState
+from pyflic_ble.protocol import InitButtonEventsDuoRequest, InitButtonEventsRequest
+from pyflic_ble.security import chaskey_generate_subkeys, chaskey_with_dir_and_counter
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "flic_button"
 package = types.ModuleType("flic_under_test")
@@ -71,6 +74,136 @@ def make_client(**kwargs):
         ble_device=BLEDevice("AA:BB:CC:DD:EE:FF", "Test Flic", {}),
         **kwargs,
     )
+
+
+def make_packet_client(device_type):
+    """Real handlers/serialization/signatures; only Bluetooth I/O is mocked."""
+    client = make_client(device_type=device_type)
+    client._client = types.SimpleNamespace(write_gatt_char=AsyncMock())
+    client._state = SessionState.SESSION_ESTABLISHED
+    client._connection_id = 3
+    client._chaskey_keys = chaskey_generate_subkeys(bytes(range(16)))
+    client.handler.bind_transport(
+        write_gatt=AsyncMock(),
+        write_packet=client._write_packet,
+        wait_for_opcode=AsyncMock(return_value=b"\x00\x00"),
+        wait_for_opcodes=AsyncMock(return_value=b"\x00\x00"),
+    )
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "device_type,offset", [(DeviceType.FLIC2, 10), (DeviceType.DUO, 14)]
+)
+async def test_real_init_handlers_disable_idle_disconnect_before_signing(
+    device_type, offset
+):
+    client = make_packet_client(device_type)
+    # Every new session uses the same init path, including reconnections.
+    await client.init_button_events()
+    await client.init_button_events()
+    writes = client._client.write_gatt_char.await_args_list
+    init_packets = []
+    for counter, call in enumerate(writes):
+        packet = bytes(call.args[1])
+        body, signature = packet[:-5], packet[-5:]
+        assert signature == chaskey_with_dir_and_counter(
+            client._chaskey_keys, direction=1, counter=counter, data=body[1:]
+        )
+        if body[1] in (23, 35):
+            bits = struct.unpack_from("<Q", body, offset)[0]
+            assert bits & 0x1FF == 511
+            assert (bits >> 9) & 31 == 30
+            assert (bits >> 14) & 0xFFFFF == 60
+            assert body[0] == 3
+            init_packets.append(body)
+    assert len(init_packets) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "device_type,offset,request_type",
+    [
+        (DeviceType.FLIC2, 10, InitButtonEventsRequest),
+        (DeviceType.DUO, 14, InitButtonEventsDuoRequest),
+    ],
+)
+@pytest.mark.parametrize("original_timeout", [0, 40, 511])
+async def test_idle_fix_preserves_every_other_packet_bit(
+    device_type, offset, request_type, original_timeout
+):
+    client = make_packet_client(device_type)
+    original = request_type(
+        connection_id=3,
+        boot_id=0x12345678,
+        auto_disconnect_time=original_timeout,
+        max_queued_packets=31,
+        max_queued_packets_age=0xABCDE,
+    ).to_bytes()
+    await client._write_packet(original)
+    packet = bytes(client._client.write_gatt_char.await_args.args[1])
+    actual = packet[:-5]
+    before = int.from_bytes(original, "little")
+    after = int.from_bytes(actual, "little")
+    timeout_mask = 0x1FF << (offset * 8)
+    assert after == before | timeout_mask
+    assert len(actual) == len(original)
+    # There is no mutation of the caller's buffer or the upstream request class.
+    assert struct.unpack_from("<Q", original, offset)[0] & 0x1FF == original_timeout
+    assert request_type(connection_id=0).auto_disconnect_time == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "device_type,packet,authenticated",
+    [
+        (DeviceType.TWIST, InitButtonEventsRequest(connection_id=0).to_bytes(), True),
+        (
+            DeviceType.TWIST,
+            InitButtonEventsDuoRequest(connection_id=0).to_bytes(),
+            True,
+        ),
+        (DeviceType.TWIST, b"\x0c\x00\x01\x02", True),
+        (
+            DeviceType.FLIC2,
+            InitButtonEventsDuoRequest(connection_id=0).to_bytes(),
+            True,
+        ),
+        (DeviceType.DUO, InitButtonEventsRequest(connection_id=0).to_bytes(), True),
+        (DeviceType.FLIC2, b"\x03\x0c\x01\x02\x03\x04", True),
+        (DeviceType.DUO, b"\x03\x14", True),
+        (DeviceType.FLIC2, InitButtonEventsRequest(connection_id=0).to_bytes(), False),
+        (DeviceType.DUO, InitButtonEventsDuoRequest(connection_id=0).to_bytes(), False),
+    ],
+)
+async def test_idle_fix_leaves_twist_other_commands_and_unsigned_packets_unchanged(
+    device_type, packet, authenticated
+):
+    client = make_packet_client(device_type)
+    await client._write_packet(packet, authenticated)
+    actual = bytes(client._client.write_gatt_char.await_args.args[1])
+    assert (actual[:-5] if authenticated else actual) == packet
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "device_type,request_type",
+    [
+        (DeviceType.FLIC2, InitButtonEventsRequest),
+        (DeviceType.DUO, InitButtonEventsDuoRequest),
+    ],
+)
+@pytest.mark.parametrize("size_change", [-1, 1])
+async def test_idle_fix_rejects_unexpected_init_layout(
+    device_type, request_type, size_change
+):
+    client = make_packet_client(device_type)
+    packet = request_type(connection_id=0).to_bytes()
+    packet = packet[:-1] if size_change < 0 else packet + b"\x00"
+    with pytest.raises(FlicProtocolError, match="Unexpected init-event packet layout"):
+        await client._write_packet(packet)
+    client._client.write_gatt_char.assert_not_awaited()
 
 
 @pytest.mark.asyncio

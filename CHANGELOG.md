@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-20
+
+### Fixed
+
+- Disable automatic idle disconnection for Flic 2/Duo with the protocol value
+  `511`, correcting `pyflic-ble` 0.2.5's init-event value `0` before packet signing.
+  Preserve adjacent event-queue fields, pairing packets and Twist behavior.
+- Add packet-level regressions for the real upstream handlers, authentication
+  signatures and malformed layouts. A live smoke test with two Flic 2 buttons
+  showed over 12 minutes of uninterrupted HA availability after the last clicks,
+  with both BLE links still connected. Initial connection retries still occurred.
+
 ## [1.0.1] - 2026-09-20
 
 ### Added
