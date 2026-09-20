@@ -2,17 +2,15 @@
 
 from dataclasses import dataclass
 
-from bleak import BleakError
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import BluetoothCallbackMatcher
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
 from pyflic_ble import (
     DeviceType,
-    FlicAuthenticationError,
-    FlicProtocolError,
+    FlicState,
     PushTwistMode,
 )
 
@@ -47,9 +45,9 @@ type FlicButtonConfigEntry = ConfigEntry[FlicButtonData]
 async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -> bool:
     """Set up Flic Button from a config entry."""
 
-    address: str = entry.data[CONF_ADDRESS]
+    address: str = entry.data[CONF_ADDRESS].upper()
     ble_device = bluetooth.async_ble_device_from_address(
-        hass, address.upper(), connectable=True
+        hass, address, connectable=True
     )
     pairing_key = bytes.fromhex(entry.data[CONF_PAIRING_KEY])
     serial_number = entry.data.get(CONF_SERIAL_NUMBER)
@@ -75,25 +73,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -
         serial_number=serial_number,
     )
 
-    if ble_device:
-        try:
-            await client.start()
-        except FlicAuthenticationError as err:
-            await client.stop()
-            # Pairing credentials are no longer accepted by the button
-            # (factory reset or re-paired elsewhere) - retrying will not help.
-            raise ConfigEntryError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_auth",
-                translation_placeholders={"address": address},
-            ) from err
-        except (TimeoutError, BleakError, FlicProtocolError) as err:
-            await client.stop()
-            raise ConfigEntryNotReady(
-                translation_domain=DOMAIN,
-                translation_key="cannot_connect",
-                translation_placeholders={"address": address},
-            ) from err
+    # Subscribe entities before any session can deliver events. An offline
+    # button must not block HA startup or prevent Bluetooth callbacks being set up.
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        await client.stop()
+        raise
+
+    @callback
+    def _async_update_device(state: FlicState) -> None:
+        """Firmware is read after entities have already been registered."""
+        if state.firmware_version is None:
+            return
+        registry = dr.async_get(hass)
+        device = registry.async_get_device_by_identifier(
+            (DOMAIN, address), entry.entry_id
+        )
+        version = str(state.firmware_version)
+        if device is not None and device.sw_version != version:
+            registry.async_update_device(device.id, sw_version=version)
+
+    entry.async_on_unload(client.register_state_callback(_async_update_device))
 
     @callback
     def _async_bluetooth_callback(
@@ -101,21 +102,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -
         change: bluetooth.BluetoothChange,
     ) -> None:
         """Handle Bluetooth updates for connection/reconnection."""
-        client.set_ble_device(service_info.device)
+        if service_info.connectable:
+            client.set_ble_device(service_info.device)
 
     entry.async_on_unload(
         bluetooth.async_register_callback(
             hass,
             _async_bluetooth_callback,
-            BluetoothCallbackMatcher({CONF_ADDRESS: address}),
+            BluetoothCallbackMatcher({CONF_ADDRESS: address, "connectable": True}),
             bluetooth.BluetoothScanningMode.ACTIVE,
         )
     )
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     # Reload entry when options change (e.g. push_twist_mode)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    # Use the same single background retry loop for startup and reconnection.
+    # Re-read the cache after platform setup; do not overwrite a newer device
+    # delivered by the callback with the initial, potentially stale reference.
+    if ble_device := bluetooth.async_ble_device_from_address(
+        hass, address, connectable=True
+    ):
+        client.set_ble_device(ble_device)
 
     return True
 

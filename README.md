@@ -126,6 +126,16 @@ takes a little longer.
 
 ## Pairing
 
+### After a Home Assistant restart
+
+Already paired buttons reconnect in the background. An unreachable button does
+not block integration setup; its event entity stays unavailable until the session
+is ready. A fresh signal received by a **connectable** Bluetooth adapter wakes the
+retry loop, so reloading the integration should not be necessary. If needed,
+press the button briefly near that adapter; do not enter pairing mode again.
+Battery values are read after the session connects; RSSI alone does not prove a
+working connection. Verify a subsequent click before relying on automations.
+
 ### Flic 2: hold while pairing
 
 1. Keep the button close to the **connectable adapter**, not just a Shelly receiver.
@@ -295,6 +305,16 @@ werden mit anderen BLE-Geräten geteilt; ihre Anzahl hängt vom Adapter/Proxy ab
 Installation über HACS (Custom Repository) oder manuell nach
 `config/custom_components/`, danach Neustart. Der erste Start dauert länger, weil
 `pyflic-ble` nachinstalliert wird.
+
+#### Nach einem Home-Assistant-Neustart
+
+Nach einem HA-Neustart verbinden sich bereits gekoppelte Buttons im Hintergrund.
+Ein nicht erreichbarer Button blockiert die Einrichtung nicht; seine Event-Entität
+bleibt bis zur erfolgreichen Verbindung „nicht verfügbar“. Ein frisches Signal am
+**verbindungsfähigen** Adapter weckt den Wiederholungsversuch. Bei Bedarf dort
+einmal kurz drücken – weder neu koppeln noch die Integration neu laden.
+Batteriewerte werden nach dem Verbindungsaufbau gelesen; RSSI allein beweist keine
+funktionierende Verbindung. Anschließend einen weiteren Klick prüfen.
 
 #### Flic 2: während des Koppelns gedrückt halten
 

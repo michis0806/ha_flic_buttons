@@ -43,6 +43,36 @@ class FlicClient(BaseFlicClient):
             return
         super()._schedule_reconnect()
 
+    async def _start_inner(self) -> None:
+        """Leave no physical connection behind after an incomplete session.
+
+        Upstream's retry loop checks the BLE link, not session authentication.
+        A quick-verify timeout otherwise leaves is_connected true and stops the
+        loop while all event entities are still unavailable.
+        """
+        try:
+            await super()._start_inner()
+        except BaseException:
+            self._flic_state.connected = False
+            try:
+                async with asyncio.timeout(CLEANUP_TIMEOUT):
+                    await self.disconnect()
+            except (TimeoutError, BleakError) as err:
+                _LOGGER.warning("%s: session cleanup failed: %s", self.address, err)
+            finally:
+                self._notify_state_callbacks()
+            raise
+
+    async def stop(self) -> None:
+        """Wait for the background attempt to finish before releasing the client."""
+        self._stopped = True
+        task = self._reconnect_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self._reconnect_task = None
+        await super().stop()
+
     async def connect(self) -> None:
         """Connect and discover services with enough time for slower adapters."""
         async with self._connect_lock:

@@ -189,6 +189,96 @@ async def test_parallel_connect_calls_use_one_transport(transport):
     await client.stop()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage", ["quick_verify", "init_button_events", "_send_connection_parameters"]
+)
+async def test_incomplete_runtime_session_disconnects_and_can_retry(transport, stage):
+    client = make_client()
+    client.quick_verify = AsyncMock()
+    client.init_button_events = AsyncMock()
+    client._send_connection_parameters = AsyncMock()
+    client.get_battery_voltage = AsyncMock(return_value=3.1)
+    client.get_firmware_version = AsyncMock(return_value=11)
+    client.get_name = AsyncMock(return_value=("Flic", 0))
+    error = (
+        FlicAuthenticationError("quick verify timeout")
+        if stage == "quick_verify"
+        else FlicProtocolError("session failed")
+    )
+    getattr(client, stage).side_effect = error
+    with pytest.raises(type(error)):
+        await client.start()
+    assert not client.state.connected
+    assert not client.is_connected
+    assert transport.instances[0].disconnects == 1
+    getattr(client, stage).side_effect = None
+    client.set_ble_device(client.ble_device)
+    await asyncio.wait_for(client._reconnect_task, 2)
+    assert client.state.connected
+    assert client.state.battery_voltage == 3.1
+    assert len(transport.instances) == 2
+    await client.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["connect", "authenticate"])
+async def test_stop_waits_for_runtime_transport_cleanup(transport, stage):
+    client = make_client()
+    entered = asyncio.Event()
+
+    async def hang(*args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    if stage == "connect":
+        transport.connect_effect = hang
+    else:
+        client.quick_verify = AsyncMock(side_effect=hang)
+    client.set_ble_device(client.ble_device)
+    task = client._reconnect_task
+    await asyncio.wait_for(entered.wait(), 2)
+    await asyncio.wait_for(client.stop(), 2)
+    assert task.done()
+    assert client._reconnect_task is None
+    assert client._client is None
+    assert not client.state.connected
+    assert transport.instances[0].disconnects == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_before_background_attempt_runs(transport):
+    client = make_client()
+    client.set_ble_device(client.ble_device)
+    task = client._reconnect_task
+    await client.stop()
+    assert task.done()
+    assert client._reconnect_task is None
+    assert not transport.instances
+
+
+@pytest.mark.asyncio
+async def test_session_cleanup_timeout_preserves_cancellation(transport, monkeypatch):
+    monkeypatch.setattr(client_module, "CLEANUP_TIMEOUT", 0.01)
+    client = make_client()
+    entered = asyncio.Event()
+
+    async def hang():
+        entered.set()
+        await asyncio.Event().wait()
+
+    client.quick_verify = AsyncMock(side_effect=hang)
+    task = asyncio.create_task(client.start())
+    await asyncio.wait_for(entered.wait(), 2)
+    transport.instances[0].disconnect = AsyncMock(side_effect=hang)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert client._client is None
+    assert not client.state.connected
+    await client.stop()
+
+
 @pytest.fixture
 def flow_module(monkeypatch):
     class ConfigFlow:

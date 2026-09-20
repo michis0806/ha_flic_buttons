@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-20
+
 ### Added
 
 - Task-backed pairing progress for fresh pairing advertisements, BLE connection
@@ -18,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Load event/sensor platforms independently of button reachability at HA startup.
+  Listen for connectable Bluetooth signals and reconnect in the background without
+  requiring an integration reload. Update firmware metadata after connection.
+- Close incomplete runtime sessions so an open BLE link cannot suppress retries
+  after authentication/event initialization fails; await retry cancellation on
+  unload to prevent overlapping clients. Cover offline startup, wake-up and
+  cancellation with regression tests.
 - Clarify English/German Flic 2 pairing instructions: hold during the attempt,
   submit the pairing form before waiting for a connection, and confirm success
   in HA rather than from the LED alone. Remove the misleading ten-second promise

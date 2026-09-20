@@ -3,11 +3,10 @@
 import logging
 from typing import override
 
-from pyflic_ble import FlicState
-
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity import Entity
+from pyflic_ble import FlicState
 
 from . import FlicButtonData
 from .const import DEVICE_TYPE_MODEL_NAMES, DOMAIN
@@ -35,8 +34,9 @@ class FlicButtonEntity(Entity):
             manufacturer="Shortcut Labs",
             model=model_name,
             serial_number=serial,
-            sw_version=str(fw) if fw is not None else None,
         )
+        if fw is not None:
+            self._attr_device_info["sw_version"] = str(fw)
         self._client = client
 
     @property
