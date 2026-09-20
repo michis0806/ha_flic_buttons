@@ -72,18 +72,24 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
             client = self._client
             self._client = None
             self.hass.async_create_background_task(
-                self._async_disconnect_client(client),
+                self._async_stop_client(client),
                 name=f"{DOMAIN}_config_flow_cleanup",
             )
 
-    async def _async_disconnect_client(self, client: FlicClient) -> None:
-        """Disconnect a BLE client, logging any failure instead of discarding it."""
+    async def _async_stop_client(self, client: FlicClient) -> None:
+        """Stop a BLE client, logging any failure instead of discarding it.
+
+        stop() and not disconnect(): disconnect() leaves the reconnect task
+        running and does not set the stopped flag, so the client keeps
+        reconnecting to the button after the flow is gone, occupying the only
+        connectable adapter and blocking every later pairing attempt.
+        """
         try:
-            await client.disconnect()
+            await client.stop()
         except (BleakError, FlicProtocolError, TimeoutError) as err:
-            _LOGGER.debug("Error disconnecting Flic client during cleanup: %s", err)
+            _LOGGER.debug("Error stopping Flic client during cleanup: %s", err)
         except Exception:
-            _LOGGER.exception("Unexpected error disconnecting Flic client")
+            _LOGGER.exception("Unexpected error stopping Flic client")
 
     @classmethod
     @callback
@@ -320,7 +326,7 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             finally:
                 if self._client:
-                    await self._async_disconnect_client(self._client)
+                    await self._async_stop_client(self._client)
                     self._client = None
 
             if not errors:

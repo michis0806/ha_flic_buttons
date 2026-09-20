@@ -5,6 +5,20 @@ All notable changes to this integration are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-09-20
+
+### Fixed
+
+- Config flow: a failed or abandoned pairing left a `FlicClient` reconnecting to
+  the button forever. The cleanup called `client.disconnect()`, which neither
+  cancels the reconnect task nor sets the client's stopped flag, so
+  `_handle_disconnected()` kept rescheduling the loop. Every retry added another
+  zombie client; together they occupied the only connectable adapter, so each new
+  pairing attempt failed with `org.bluez.Error.InProgress`, "failed to discover
+  services" or "no connection slot", while the button still flashed green because
+  a zombie client was acknowledging its presses. Cleanup now calls
+  `client.stop()`.
+
 ## [0.1.0] - 2026-09-20
 
 Initial packaging of the upstream integration as a custom component.
