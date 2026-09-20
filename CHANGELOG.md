@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-20
+
+First stable release as an independently maintained custom integration.
+Requires Home Assistant 2026.9 or newer. Hardware testing has covered Flic 2;
+Duo and Twist support is inherited and has not been hardware-tested here.
+
 ### Added
 
 - Diagnostic battery-voltage and last-advertisement RSSI sensors on each device.
@@ -28,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Continue independent maintenance with project-specific fixes and features;
+  this is not a temporary test distribution for the Home Assistant core PR.
 - Stop publishing raw `up`/`down` events to HA. Flic 2 exposes only `click`,
   `double_click` and `hold`; Duo/Twist retain their additional gestures.
   Automations depending on raw press/release events must be updated.

@@ -10,10 +10,12 @@ buttons directly over Bluetooth LE** — no Flic Hub, no `flicd` daemon, no clou
 
 ## What this is
 
-This is **not original work**. It packages the Home Assistant core
-pull request [#182198](https://github.com/home-assistant/core/pull/182198) as a
-custom integration, plus the fixes and additions
-listed in [CHANGELOG.md](CHANGELOG.md).
+This is an **independently maintained custom integration**, based on the work in
+Home Assistant core pull request
+[#182198](https://github.com/home-assistant/core/pull/182198). It has its own
+releases, fixes and features, listed in [CHANGELOG.md](CHANGELOG.md), and is not
+intended as a temporary test distribution of the core PR. Credit for the original
+integration and protocol library remains with their authors.
 
 The heavy lifting is done by [pyflic-ble](https://github.com/50ButtonsEach/pyflic-ble),
 the official BLE library from Shortcut Labs. Pairing is done at the application
@@ -176,6 +178,10 @@ Hardware verification has covered a Flic 2 on HA 2026.9.3: pairing, reconnection
 press events and diagnostics. This does not imply equivalent hardware testing of
 Duo/Twist or every adapter.
 
+To publish a release, update the manifest version and the dated changelog entry,
+then push the matching `vX.Y.Z` tag. The release workflow runs HACS, Hassfest and
+the offline tests before publishing a GitHub release with the changelog notes.
+
 ## Credits
 
 - Upstream integration: [@joostlek](https://github.com/joostlek) and
@@ -200,10 +206,12 @@ fixes and additions. Use at your own risk.
 Home-Assistant-Integration, die **Flic 2, Flic Duo und Flic Twist direkt per
 Bluetooth LE** anbindet — ohne Flic Hub, ohne `flicd`, ohne Cloud.
 
-Das ist **keine Eigenentwicklung**: Hier liegt der Core-PR
-[#182198](https://github.com/home-assistant/core/pull/182198) als Custom Integration,
-mit zusätzlichen Korrekturen und Erweiterungen aus
-[CHANGELOG.md](CHANGELOG.md). Die eigentliche Arbeit macht
+Dies ist eine **eigenständig gepflegte Custom Integration** auf Basis des Core-PRs
+[#182198](https://github.com/home-assistant/core/pull/182198), mit eigenen Releases,
+Korrekturen und Funktionen aus [CHANGELOG.md](CHANGELOG.md). Sie ist nicht als
+vorübergehende Testversion des Core-PRs gedacht. Die ursprüngliche Integration
+und die Protokollbibliothek stammen weiterhin von ihren jeweiligen Autoren.
+Die Bluetooth-Kommunikation übernimmt
 [pyflic-ble](https://github.com/50ButtonsEach/pyflic-ble), die offizielle
 BLE-Library von Shortcut Labs.
 
