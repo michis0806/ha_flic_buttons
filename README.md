@@ -10,11 +10,10 @@ buttons directly over Bluetooth LE** — no Flic Hub, no `flicd` daemon, no clou
 
 ## What this is
 
-This is **not original work**. It packages the still-unmerged Home Assistant core
+This is **not original work**. It packages the Home Assistant core
 pull request [#182198](https://github.com/home-assistant/core/pull/182198) as a
-custom integration so it can be used before it lands in a release, plus the fixes
-listed in [CHANGELOG.md](CHANGELOG.md) — including a `SyntaxError` that prevents
-the upstream branch from being imported at all.
+custom integration, plus the fixes and additions
+listed in [CHANGELOG.md](CHANGELOG.md).
 
 The heavy lifting is done by [pyflic-ble](https://github.com/50ButtonsEach/pyflic-ble),
 the official BLE library from Shortcut Labs. Pairing is done at the application
@@ -22,9 +21,10 @@ layer (ECDH key exchange authenticated with Ed25519 signatures); the pairing ID 
 key are stored in the config entry, so the button reconnects on its own after a
 restart.
 
-**When the upstream PR is merged, delete this integration and restart.** Core ships
-the same domain `flic_button` and adopts the existing config entries, pairing keys
-included. A custom component with the same domain permanently shadows the core one.
+This README describes `main`; published releases may not contain every change yet.
+If a future HA release includes `flic_button`, check its migration instructions
+before removing this custom integration. A custom component overrides the same
+core domain; automatic migration of all local features is not guaranteed.
 
 ## What you get
 
@@ -32,11 +32,65 @@ One `event` entity per button, with these event types:
 
 | Device | Events |
 | --- | --- |
-| Flic 2 | `up`, `down`, `click`, `double_click`, `hold` |
+| Flic 2 | `click`, `double_click`, `hold` |
 | Flic Duo | the above per button (big/small), plus `swipe_*` and `rotate_*` |
 | Flic Twist | the above, plus `twist_increment`/`twist_decrement` and `push_twist_*`, or `rotate_*` and `selector_changed` in selector mode |
 
 For the Twist, the mode is switchable in the integration options.
+
+Raw `up` and `down` events are deliberately not published to Home Assistant,
+reducing entity history noise. Internal button processing is unchanged. Existing
+automations listening for these raw events must use a supported type instead.
+
+### Diagnostic sensors
+
+| Sensor | Devices | Meaning and updates |
+| --- | --- | --- |
+| Battery (estimated), % | Flic 2 | Voltage-based estimate using the official Flic 2 SDK curve |
+| Battery voltage, V | All supported models | Last voltage read at startup or reconnection |
+| Signal strength (last reception), dBm | All supported models | Advertisement RSSI from HA's cache, checked every minute |
+
+Battery data is **not requested on every click**. The client reads voltage when
+establishing or re-establishing its session. The percentage is a rough estimate,
+especially between 50 and 100%, according to the
+[official Flic SDK](https://github.com/50ButtonsEach/flic2lib-android/blob/master/flic2lib-android/src/main/java/io/flic/flic2libandroid/BatteryLevel.java).
+Its curve maps 2.10 V to 0%, 2.44 V to 6%, 2.74 V to 18%, 2.90 V to 42% and
+3.00 V or higher to 100%. Voltage remains a separate sensor; this curve is not
+applied to Duo or Twist without a verified model-specific conversion.
+
+RSSI is **not live connection strength**. The `source` attribute identifies the
+receiver selected by HA, which can be a passive Shelly rather than the connected
+adapter. A strong Shelly RSSI does not prove the connectable adapter is in range.
+A connected button may stop advertising, leaving the cached RSSI unchanged.
+If a click wakes a disconnected button, advertising and reconnection may refresh
+both measurements, but clicking alone does not guarantee an update.
+
+The sensors create no extra BLE connections or scans. Missing measurements are
+`unknown`, not zero. Known values remain visible during disconnections in the
+running integration; they are not restored across HA restarts.
+
+### Automations: single, double and hold
+
+Separate press sensors are unnecessary. In the automation editor, add an
+**Event received** trigger, select your Flic event entity and choose `click`
+(single), `double_click` (double) or `hold` (long press).
+
+Example trigger for a double press; replace the entity ID with your own:
+
+```yaml
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.living_room_flic_button
+    options:
+      event_type:
+        - double_click
+```
+
+Add your desired action in the editor. This handles repeated identical presses
+and ignores `unknown`/`unavailable` transitions. Do not trigger only on changes
+of the `event_type` attribute: consecutive single presses share the same type.
+See [HA's Event received guide](https://www.home-assistant.io/triggers/event.received/).
 
 ## Requirements
 
@@ -46,12 +100,11 @@ For the Twist, the mode is switchable in the integration options.
 
 That second point is the one that bites. Flic 2 is connection-oriented — it does
 not broadcast its events as advertisements. Proxies that only forward
-advertisements are therefore useless for it, and that includes **every Shelly
-device**: `aioshelly` registers its scanner with `can_connect=lambda: False`.
+advertisements cannot deliver its clicks. Shelly Bluetooth forwarding can supply
+discovery and RSSI, but not the active connection required by the button.
 
-Each paired button also holds a BLE connection permanently. An ESP32 proxy offers
-about three concurrent connections, so plan roughly three buttons per proxy, minus
-whatever else connects through it.
+The integration maintains a BLE connection for each button. Connection slots are
+shared with other BLE devices; capacity depends on the adapter/proxy configuration.
 
 ## Installation
 
@@ -71,16 +124,57 @@ takes a little longer.
 
 ## Pairing
 
-A button that is advertising shows up as a discovered device on its own. Otherwise:
-Settings → Devices & services → *Add integration* → **Flic**, then push and hold the
-button until it connects. The pairing window is 60 seconds.
+1. Keep the button close to the **connectable adapter**, not just a Shelly receiver.
+2. Settings → Devices & services: configure the discovered Flic, or choose
+   *Add integration* → **Flic**.
+3. Hold the physical button for **about seven seconds**, then release it.
+4. If the pairing form is shown, submit it immediately; do not wait for green.
+
+The button accepts new pairings in public mode for **up to 30 seconds** after
+the long press. This differs from the integration's connection timeout. See the
+[official Flic 2 overview](https://github.com/50ButtonsEach/flic2-documentation/wiki/Technical-Overview-and-Terminology).
+
+Orange/yellow flashing indicates advertising without a connection; red can occur
+when no pairing is stored. Green on a press indicates a Bluetooth connection,
+**not necessarily successful HA authentication**. Use the setup result and actual
+click events to confirm success. Disconnect any phone or hub holding the button's
+physical connection before pairing here.
 
 A Flic can hold several pairings, so pairing with Home Assistant does not remove an
 existing pairing with the Flic app or a hub.
 
-If a button is factory reset or re-paired elsewhere, its stored credentials stop
-working. Home Assistant then reports the entry as failed with a "pairing no longer
-valid" message — remove the device and pair it again.
+Factory resets invalidate stored pairings; adding another app does not necessarily
+do so. If credentials really become invalid, remove the failed entry and pair
+again. Do not factory-reset merely to wake a button.
+
+### Troubleshooting
+
+- Discovery through a passive receiver does not prove the active adapter can
+  reach the button. Check adapter placement first if connection attempts time out.
+- Avoid parallel pairing attempts. The local client suppresses automatic
+  reconnects during pairing and cleans up failed/cancelled attempts; normal
+  runtime reconnection is retained.
+- If other BLE clients are active, a temporary isolation test may help. Restore
+  those clients afterwards; a successful isolated test alone is not proof of cause.
+- After a restart, try one short press near the adapter before deleting any
+  pairing. Code updates need a restart, not a new pairing.
+- The local workaround has bounded connection/service-discovery and notification
+  timeouts, but cannot fix unreachable or incompatible hardware.
+
+## Development and tests
+
+Offline tests use the real pinned Flic library with HA and BLE I/O test doubles;
+they never connect to physical buttons.
+
+```sh
+python3.14 -m venv .venv
+.venv/bin/pip install -r requirements-test.txt
+.venv/bin/python -m pytest -q tests
+```
+
+Hardware verification has covered a Flic 2 on HA 2026.9.3: pairing, reconnection,
+press events and diagnostics. This does not imply equivalent hardware testing of
+Duo/Twist or every adapter.
 
 ## Credits
 
@@ -91,11 +185,13 @@ valid" message — remove the device and pair it again.
 
 Apache-2.0, inherited from Home Assistant core. See [LICENSE](LICENSE) and
 [NOTICE](NOTICE).
+The adapted connection code includes the license shipped with pyflic-ble 0.2.5
+as `custom_components/flic_button/LICENSE.pyflic-ble`.
 
 ## Disclaimer
 
-Not affiliated with Shortcut Labs. Packaging of a pre-release branch — expect to
-throw it away once the PR lands. Use at your own risk.
+Not affiliated with Shortcut Labs. Based on upstream integration work with local
+fixes and additions. Use at your own risk.
 
 ---
 
@@ -104,18 +200,52 @@ throw it away once the PR lands. Use at your own risk.
 Home-Assistant-Integration, die **Flic 2, Flic Duo und Flic Twist direkt per
 Bluetooth LE** anbindet — ohne Flic Hub, ohne `flicd`, ohne Cloud.
 
-Das ist **keine Eigenentwicklung**: Hier liegt der noch nicht gemergte Core-PR
+Das ist **keine Eigenentwicklung**: Hier liegt der Core-PR
 [#182198](https://github.com/home-assistant/core/pull/182198) als Custom Integration,
-damit er sich vor dem Release nutzen lässt — plus die Korrekturen aus
-[CHANGELOG.md](CHANGELOG.md), darunter ein `SyntaxError`, mit dem sich der
-Upstream-Branch gar nicht erst importieren lässt. Die eigentliche Arbeit macht
+mit zusätzlichen Korrekturen und Erweiterungen aus
+[CHANGELOG.md](CHANGELOG.md). Die eigentliche Arbeit macht
 [pyflic-ble](https://github.com/50ButtonsEach/pyflic-ble), die offizielle
 BLE-Library von Shortcut Labs.
 
-**Sobald der PR gemerged ist: Integration löschen und neu starten.** Der Core
-bringt dieselbe Domain `flic_button` mit und übernimmt die vorhandenen Config
-Entries samt Pairing-Keys. Ein gleichnamiges Custom Component verdeckt die
-Core-Variante sonst dauerhaft.
+Diese README beschreibt `main`; veröffentlichte Versionen können davon abweichen.
+Falls HA später eine eigene `flic_button`-Integration ausliefert, zuerst deren
+Migrationshinweise prüfen. Die Custom Integration verdeckt eine gleichnamige
+Core-Integration; die automatische Übernahme aller Zusatzfunktionen ist nicht
+zugesichert.
+
+### Ereignisse und Sensoren
+
+Flic 2 veröffentlicht nur **`click` (einfach), `double_click` (doppelt) und `hold`
+(halten)**. `up`/`down` erscheinen nicht mehr als HA-Ereignisse; intern bleibt die
+Verarbeitung erhalten. Alte Automationen mit `up`/`down` müssen angepasst werden.
+Duo und Twist behalten ihre zusätzlichen Wisch-/Dreh- und Modusfunktionen.
+
+Am selben Gerät erscheinen:
+
+- **Batterie (geschätzt)** in %, nur für Flic 2, nach der offiziellen Flic-Kurve:
+  ab 3,00 V = 100%, bei 2,90 V = 42%, bei 2,10 V = 0%. Besonders zwischen 50 und
+  100% ist diese Schätzung ungenau.
+- **Batteriespannung** in Volt. Sie wird beim Start und bei Wiederverbindung
+  abgefragt, **nicht bei jedem Klick**. Die Spannungsentität bleibt erhalten.
+- **Signalstärke (letzter Empfang)** in dBm, aus dem HA-Empfangscache einmal pro
+  Minute gelesen. Dafür werden keine zusätzlichen BLE-Verbindungen aufgebaut.
+
+Der RSSI-Wert kann von einem passiven Shelly stammen; die Kennung steht im
+Attribut `source`. Er ist kein Live-Wert der aktiven Verbindung und kann länger
+unverändert bleiben. Ein Klick kann indirekt neue Messwerte bringen, wenn er den
+Button aufweckt und eine Wiederverbindung auslöst, garantiert das aber nicht.
+Fehlende Werte sind „unbekannt“. Bekannte Werte bleiben bei Verbindungsabbruch
+sichtbar, werden aber nicht über HA-Neustarts hinweg gespeichert.
+
+### Automationen
+
+Im Automationseditor **Auslöser hinzufügen → Flic-Event-Entität auswählen →
+Ereignis empfangen** und `click`, `double_click` oder `hold` auswählen. Separate
+Druck-Sensoren sind nicht nötig. Das YAML-Beispiel oben zeigt einen Doppelklick.
+
+Nicht ausschließlich auf eine Änderung des Attributs `event_type` reagieren:
+Zwei Einfachklicks hintereinander haben denselben Typ. „Ereignis empfangen“
+verarbeitet beide und ignoriert reine „unbekannt“-/„nicht verfügbar“-Übergänge.
 
 ### Voraussetzungen
 
@@ -125,12 +255,11 @@ Core-Variante sonst dauerhaft.
 
 Der zweite Punkt ist der entscheidende. Flic 2 ist verbindungsorientiert und sendet
 seine Ereignisse nicht als Advertisements. Proxies, die nur Advertisements
-weiterreichen, helfen deshalb nicht — und dazu gehören **alle Shelly-Geräte**:
-`aioshelly` meldet seinen Scanner mit `can_connect=lambda: False` an.
+weiterreichen, können daher keine Tastenklicks liefern. Shelly-Geräte können
+Erkennung und RSSI beisteuern, aber keine aktive Flic-Verbindung herstellen.
 
-Jeder gekoppelte Button hält außerdem dauerhaft eine BLE-Verbindung. Ein
-ESP32-Proxy schafft etwa drei gleichzeitige Verbindungen — also grob drei Buttons
-pro Proxy, abzüglich allem anderen, was darüber verbindet.
+Die Integration hält eine BLE-Verbindung pro Button. Die verfügbaren Plätze
+werden mit anderen BLE-Geräten geteilt; ihre Anzahl hängt vom Adapter/Proxy ab.
 
 ### Installation und Kopplung
 
@@ -138,13 +267,26 @@ Installation über HACS (Custom Repository) oder manuell nach
 `config/custom_components/`, danach Neustart. Der erste Start dauert länger, weil
 `pyflic-ble` nachinstalliert wird.
 
-Ein sendender Button taucht von selbst als gefundenes Gerät auf. Sonst:
-*Integration hinzufügen* → **Flic**, dann den Button gedrückt halten, bis er sich
-verbindet. Das Kopplungsfenster beträgt 60 Sekunden.
+1. Button nahe an den **verbindungsfähigen Adapter** legen.
+2. Den gefundenen Flic konfigurieren oder *Integration hinzufügen* → **Flic**.
+3. Den physischen Button **sieben Sekunden gedrückt halten**, dann loslassen.
+4. Falls das Kopplungsformular angezeigt wird, **sofort absenden**.
+
+Der Kopplungsmodus bleibt nur bis zu **30 Sekunden** aktiv; die Zeitlimits der
+Integration sind davon unabhängig. Orange/gelb zeigt Senden ohne Verbindung;
+Rot kann bei fehlenden Kopplungen auftreten. Grün beim Klick beweist eine
+Bluetooth-Verbindung, aber noch keine erfolgreiche HA-Kopplung.
 
 Ein Flic kann mehrere Kopplungen speichern — die Kopplung mit der Flic-App oder
 einem Hub bleibt also bestehen.
 
-Wird ein Button zurückgesetzt oder anderswo neu gekoppelt, sind die gespeicherten
-Zugangsdaten ungültig. Home Assistant meldet den Eintrag dann als fehlgeschlagen
-("Kopplung nicht mehr gültig") — Gerät entfernen und neu koppeln.
+Ein Werksreset löscht Kopplungen; eine zusätzliche App-Kopplung tut das nicht
+zwangsläufig. Ein bereits verbundener Hub oder ein Smartphone muss seine aktive
+Verbindung für die Einrichtung freigeben.
+
+Bei Aussetzern zuerst Reichweite des aktiven Adapters und konkurrierende
+BLE-Verbindungen prüfen. Ein guter Shelly-RSSI beweist keine gute Verbindung zum
+aktiven Adapter. Nach HA-Neustart gegebenenfalls kurz drücken, nicht sofort neu
+koppeln oder zurücksetzen. Die lokale Verbindungskorrektur bereinigt fehlerhafte
+Versuche und unterbindet parallele Reconnects beim Koppeln; Hardware- und
+Reichweitenprobleme bleiben trotzdem möglich.

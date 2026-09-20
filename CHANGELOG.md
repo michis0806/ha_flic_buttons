@@ -5,6 +5,35 @@ All notable changes to this integration are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Diagnostic battery-voltage and last-advertisement RSSI sensors on each device.
+  RSSI includes the receiver source and reads HA's cache without extra BLE I/O.
+- Estimated Flic 2 battery percentage using the manufacturer's voltage curve.
+  Existing voltage statistics and entity IDs remain unchanged.
+- Portable offline regression tests for connection/pairing cleanup, diagnostics,
+  battery conversion and event filtering.
+- English/German documentation for diagnostics, pairing and event automations.
+
+### Fixed
+
+- Bounded BLE connection/service discovery, notification setup and cleanup via
+  a local client subclass for pinned pyflic-ble 0.2.5.
+- Prevent competing automatic reconnects during initial pairing, serialize
+  connection attempts and cancel an active attempt when its config flow closes.
+- Clean up clients after setup/authentication failures and reject duplicate
+  pairing submissions.
+
+### Changed
+
+- Stop publishing raw `up`/`down` events to HA. Flic 2 exposes only `click`,
+  `double_click` and `hold`; Duo/Twist retain their additional gestures.
+  Automations depending on raw press/release events must be updated.
+- Document battery estimates and cached RSSI limitations, including that neither
+  is guaranteed to refresh on every click.
+
 ## [0.1.1] - 2026-09-20
 
 ### Fixed

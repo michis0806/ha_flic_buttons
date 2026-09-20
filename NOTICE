@@ -11,8 +11,14 @@ Apache License, Version 2.0. See LICENSE.
 Modifications by michis0806 (2026) are released under the same license and are
 listed in CHANGELOG.md.
 
-The bundled runtime dependency pyflic-ble (https://github.com/50ButtonsEach/pyflic-ble)
-is installed from PyPI at runtime and is not redistributed here.
+The runtime dependency pyflic-ble (https://github.com/50ButtonsEach/pyflic-ble)
+is installed from PyPI. The local client.py adapts its connection initialization
+from version 0.2.5; the Apache-2.0 license shipped with that version is included
+as custom_components/flic_button/LICENSE.pyflic-ble.
+
+The Flic 2 battery estimate uses the voltage/percentage curve published by
+Shortcut Labs in flic2lib-android's BatteryLevel.java. See the source link in
+sensor.py and README.md. No model-specific curve is assumed for other batteries.
 
 "Flic" is a trademark of Shortcut Labs AB. This project is not affiliated with
 Shortcut Labs.

@@ -28,6 +28,17 @@
     }
   },
   "entity": {
+    "sensor": {
+      "battery_level": {
+        "name": "Batterie (geschätzt)"
+      },
+      "battery_voltage": {
+        "name": "Batteriespannung"
+      },
+      "signal_strength": {
+        "name": "Signalstärke (letzter Empfang)"
+      }
+    },
     "event": {
       "button": {
         "name": "Taste",

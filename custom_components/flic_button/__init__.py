@@ -3,21 +3,20 @@
 from dataclasses import dataclass
 
 from bleak import BleakError
-from pyflic_ble import (
-    DeviceType,
-    FlicAuthenticationError,
-    FlicClient,
-    FlicProtocolError,
-    PushTwistMode,
-)
-
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import BluetoothCallbackMatcher
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
+from pyflic_ble import (
+    DeviceType,
+    FlicAuthenticationError,
+    FlicProtocolError,
+    PushTwistMode,
+)
 
+from .client import FlicClient
 from .const import (
     CONF_DEVICE_TYPE,
     CONF_PAIRING_ID,
@@ -30,6 +29,7 @@ from .const import (
 
 PLATFORMS: list[Platform] = [
     Platform.EVENT,
+    Platform.SENSOR,
 ]
 
 
@@ -79,6 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -
         try:
             await client.start()
         except FlicAuthenticationError as err:
+            await client.stop()
             # Pairing credentials are no longer accepted by the button
             # (factory reset or re-paired elsewhere) - retrying will not help.
             raise ConfigEntryError(
@@ -87,6 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -
                 translation_placeholders={"address": address},
             ) from err
         except (TimeoutError, BleakError, FlicProtocolError) as err:
+            await client.stop()
             raise ConfigEntryNotReady(
                 translation_domain=DOMAIN,
                 translation_key="cannot_connect",

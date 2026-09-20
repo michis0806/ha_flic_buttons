@@ -1,21 +1,13 @@
 """Config flow for Flic Button integration."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, override
 
-from bleak import BleakError
-from pyflic_ble import (
-    DeviceType,
-    FlicAuthenticationError,
-    FlicClient,
-    FlicPairingError,
-    FlicProtocolError,
-    PushTwistMode,
-)
-from pyflic_ble.const import FLIC_SERVICE_UUID, PAIRING_TIMEOUT, TWIST_SERVICE_UUID
 import voluptuous as vol
-
+from bleak import BleakError
 from homeassistant.components.bluetooth import (
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
@@ -30,7 +22,16 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from pyflic_ble import (
+    DeviceType,
+    FlicAuthenticationError,
+    FlicPairingError,
+    FlicProtocolError,
+    PushTwistMode,
+)
+from pyflic_ble.const import FLIC_SERVICE_UUID, PAIRING_TIMEOUT, TWIST_SERVICE_UUID
 
+from .client import FlicClient
 from .const import (
     CONF_DEVICE_TYPE,
     CONF_PAIRING_ID,
@@ -61,6 +62,7 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
         self._device_type: DeviceType = DeviceType.FLIC2
         self._discovery_task: asyncio.Task[BluetoothServiceInfoBleak] | None = None
         self._pairing_started: bool = False
+        self._pairing_task: asyncio.Task | None = None
 
     @callback
     @override
@@ -68,6 +70,10 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
         """Clean up BLE client and discovery task when the flow is removed."""
         if self._discovery_task and not self._discovery_task.done():
             self._discovery_task.cancel()
+        if self._pairing_task and not self._pairing_task.done():
+            # The pairing coroutine owns the client and stops it in finally.
+            self._pairing_task.cancel()
+            return
         if self._client:
             client = self._client
             self._client = None
@@ -299,10 +305,15 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
                     address=self._discovery_info.device.address,
                     ble_device=self._discovery_info.device,
                     device_type=self._device_type,
+                    pairing_only=True,
                 )
 
+            self._pairing_task = asyncio.current_task()
+            stage = "Bluetooth connection and service discovery"
             try:
                 await self._client.connect()
+                stage = "Flic authentication"
+                _LOGGER.info("%s: starting %s", self._discovery_info.address, stage)
                 (
                     pairing_id,
                     pairing_key,
@@ -315,19 +326,40 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._client.full_verify_pairing(),
                     timeout=PAIRING_TIMEOUT,
                 )
-            except (TimeoutError, BleakError, FlicProtocolError):
+            except (TimeoutError, BleakError, FlicProtocolError) as err:
+                _LOGGER.warning(
+                    "%s: %s failed (%s): %s",
+                    self._discovery_info.address,
+                    stage,
+                    type(err).__name__,
+                    err,
+                )
                 errors["base"] = "cannot_connect"
-            except FlicPairingError:
+            except FlicPairingError as err:
+                _LOGGER.warning(
+                    "%s: pairing rejected (%s)",
+                    self._discovery_info.address,
+                    type(err).__name__,
+                )
                 errors["base"] = "pairing_failed"
-            except FlicAuthenticationError:
+            except FlicAuthenticationError as err:
+                _LOGGER.warning(
+                    "%s: authentication failed (%s)",
+                    self._discovery_info.address,
+                    type(err).__name__,
+                )
                 errors["base"] = "invalid_signature"
             except Exception:
                 _LOGGER.exception("Unexpected exception during pairing")
                 errors["base"] = "unknown"
             finally:
-                if self._client:
-                    await self._async_stop_client(self._client)
+                try:
+                    if self._client:
+                        await self._async_stop_client(self._client)
+                finally:
                     self._client = None
+                    self._pairing_task = None
+                    self._pairing_started = False
 
             if not errors:
                 final_device_type = (
@@ -348,9 +380,6 @@ class FlicButtonConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_SIG_BITS: sig_bits,
                     },
                 )
-
-        # Allow the user to retry after an error
-        self._pairing_started = False
 
         # Show pairing form
         return self.async_show_form(

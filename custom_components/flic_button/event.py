@@ -2,11 +2,17 @@
 
 from typing import Any, override
 
+from homeassistant.components.event import (
+    EventDeviceClass,
+    EventEntity,
+    EventEntityDescription,
+)
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from pyflic_ble import PushTwistMode
 from pyflic_ble.const import (
     EVENT_TYPE_CLICK,
     EVENT_TYPE_DOUBLE_CLICK,
-    EVENT_TYPE_DOWN,
     EVENT_TYPE_HOLD,
     EVENT_TYPE_PUSH_TWIST_DECREMENT,
     EVENT_TYPE_PUSH_TWIST_INCREMENT,
@@ -19,16 +25,7 @@ from pyflic_ble.const import (
     EVENT_TYPE_SWIPE_UP,
     EVENT_TYPE_TWIST_DECREMENT,
     EVENT_TYPE_TWIST_INCREMENT,
-    EVENT_TYPE_UP,
 )
-
-from homeassistant.components.event import (
-    EventDeviceClass,
-    EventEntity,
-    EventEntityDescription,
-)
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import FlicButtonConfigEntry, FlicButtonData
 from .const import CONF_PUSH_TWIST_MODE, EVENT_CLASS_BUTTON
@@ -40,8 +37,6 @@ EVENT_DESCRIPTION = EventEntityDescription(
     key=EVENT_CLASS_BUTTON,
     translation_key=EVENT_CLASS_BUTTON,
     event_types=[
-        EVENT_TYPE_UP,
-        EVENT_TYPE_DOWN,
         EVENT_TYPE_CLICK,
         EVENT_TYPE_DOUBLE_CLICK,
         EVENT_TYPE_HOLD,
@@ -52,8 +47,6 @@ EVENT_DESCRIPTION = EventEntityDescription(
 # Duo button-specific descriptions with translation keys
 # Duo buttons support all standard events plus swipe gestures and rotation
 DUO_BUTTON_EVENT_TYPES: list[str] = [
-    EVENT_TYPE_UP,
-    EVENT_TYPE_DOWN,
     EVENT_TYPE_CLICK,
     EVENT_TYPE_DOUBLE_CLICK,
     EVENT_TYPE_HOLD,
@@ -84,8 +77,6 @@ TWIST_SELECTOR_BUTTON_DESCRIPTION = EventEntityDescription(
     key=f"{EVENT_CLASS_BUTTON}_twist",
     translation_key="button_twist",
     event_types=[
-        EVENT_TYPE_UP,
-        EVENT_TYPE_DOWN,
         EVENT_TYPE_CLICK,
         EVENT_TYPE_DOUBLE_CLICK,
         EVENT_TYPE_HOLD,
@@ -101,8 +92,6 @@ TWIST_DEFAULT_BUTTON_DESCRIPTION = EventEntityDescription(
     key=f"{EVENT_CLASS_BUTTON}_twist",
     translation_key="button_twist_default",
     event_types=[
-        EVENT_TYPE_UP,
-        EVENT_TYPE_DOWN,
         EVENT_TYPE_CLICK,
         EVENT_TYPE_DOUBLE_CLICK,
         EVENT_TYPE_HOLD,
