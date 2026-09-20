@@ -1,0 +1,18 @@
+ha_flic_buttons
+
+This repository redistributes the "flic_button" integration from the Home
+Assistant core pull request #182198 (https://github.com/home-assistant/core/pull/182198),
+authored by Joost Lekkerkerker (@joostlek) and Shortcut Labs / 50ButtonsEach,
+as a Home Assistant custom integration.
+
+Original work: Copyright (c) Home Assistant contributors, licensed under the
+Apache License, Version 2.0. See LICENSE.
+
+Modifications by michis0806 (2026) are released under the same license and are
+listed in CHANGELOG.md.
+
+The bundled runtime dependency pyflic-ble (https://github.com/50ButtonsEach/pyflic-ble)
+is installed from PyPI at runtime and is not redistributed here.
+
+"Flic" is a trademark of Shortcut Labs AB. This project is not affiliated with
+Shortcut Labs.

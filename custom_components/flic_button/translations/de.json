@@ -1,0 +1,153 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Dieses Flic-Gerät ist bereits eingerichtet.",
+      "no_devices_found": "Keine Geräte gefunden"
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum Gerät fehlgeschlagen. Stelle sicher, dass es in Reichweite ist, und versuche es erneut.",
+      "invalid_signature": "Ungültige Gerätesignatur beim Koppeln.",
+      "pairing_failed": "Koppeln fehlgeschlagen. Stelle sicher, dass sich das Gerät im Kopplungsmodus befindet (LED blinkt), und versuche es erneut.",
+      "unknown": "Beim Koppeln ist ein unerwarteter Fehler aufgetreten."
+    },
+    "progress": {
+      "wait_for_discovery": "Halte den Flic gedrückt, bis er sich verbindet. Das dauert in der Regel nur wenige Sekunden …"
+    },
+    "step": {
+      "bluetooth_confirm": {
+        "description": "{name} einrichten?",
+        "title": "Flic-Gerät gefunden"
+      },
+      "pair": {
+        "description": "Halte den Flic gedrückt, bis er sich verbindet. Bestätige danach dieses Formular, um das Koppeln mit {name} abzuschließen.",
+        "title": "Mit Flic-Gerät koppeln"
+      },
+      "user": {
+        "title": "Mit Flic-Gerät koppeln"
+      }
+    }
+  },
+  "entity": {
+    "event": {
+      "button": {
+        "name": "Taste",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "click": "Einfacher Druck",
+              "double_click": "Doppelter Druck",
+              "down": "Gedrückt",
+              "hold": "Gehalten",
+              "up": "Losgelassen"
+            }
+          }
+        }
+      },
+      "button_big": {
+        "name": "Große Taste",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "click": "Einfacher Druck",
+              "double_click": "Doppelter Druck",
+              "down": "Gedrückt",
+              "hold": "Gehalten",
+              "rotate_clockwise": "Im Uhrzeigersinn gedreht",
+              "rotate_counter_clockwise": "Gegen den Uhrzeigersinn gedreht",
+              "swipe_down": "Nach unten gewischt",
+              "swipe_left": "Nach links gewischt",
+              "swipe_right": "Nach rechts gewischt",
+              "swipe_up": "Nach oben gewischt",
+              "up": "Losgelassen"
+            }
+          }
+        }
+      },
+      "button_small": {
+        "name": "Kleine Taste",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "click": "Einfacher Druck",
+              "double_click": "Doppelter Druck",
+              "down": "Gedrückt",
+              "hold": "Gehalten",
+              "rotate_clockwise": "Im Uhrzeigersinn gedreht",
+              "rotate_counter_clockwise": "Gegen den Uhrzeigersinn gedreht",
+              "swipe_down": "Nach unten gewischt",
+              "swipe_left": "Nach links gewischt",
+              "swipe_right": "Nach rechts gewischt",
+              "swipe_up": "Nach oben gewischt",
+              "up": "Losgelassen"
+            }
+          }
+        }
+      },
+      "button_twist": {
+        "name": "Taste",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "click": "Einfacher Druck",
+              "double_click": "Doppelter Druck",
+              "down": "Gedrückt",
+              "hold": "Gehalten",
+              "rotate_clockwise": "Im Uhrzeigersinn gedreht",
+              "rotate_counter_clockwise": "Gegen den Uhrzeigersinn gedreht",
+              "selector_changed": "Auswahl geändert",
+              "up": "Losgelassen"
+            }
+          }
+        }
+      },
+      "button_twist_default": {
+        "name": "Taste",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "click": "Einfacher Druck",
+              "double_click": "Doppelter Druck",
+              "down": "Gedrückt",
+              "hold": "Gehalten",
+              "push_twist_decrement": "Gedrückt-Drehen verringert",
+              "push_twist_increment": "Gedrückt-Drehen erhöht",
+              "twist_decrement": "Drehung verringert",
+              "twist_increment": "Drehung erhöht",
+              "up": "Losgelassen"
+            }
+          }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Verbindung zu {address} fehlgeschlagen. Stelle sicher, dass das Gerät in Reichweite ist, und versuche es erneut."
+    },
+    "invalid_auth": {
+      "message": "Die Kopplung mit {address} ist nicht mehr gültig. Entferne das Gerät und koppele es erneut."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "push_twist_mode": "Gedrückt-Drehen-Modus"
+        },
+        "data_description": {
+          "push_twist_mode": "Steuert das Verhalten beim Gedrückthalten und Drehen. Standard löst Erhöhen-/Verringern-Ereignisse aus, die an den Grenzen stoppen. Fortlaufend verhält sich wie Standard, springt an den Grenzen aber wieder um. Auswahlmodus löst Dreh- und Auswahl-geändert-Ereignisse aus."
+        },
+        "title": "Flic-Twist-Optionen"
+      }
+    }
+  },
+  "selector": {
+    "push_twist_mode": {
+      "options": {
+        "continuous": "Fortlaufend",
+        "default": "Standard",
+        "selector": "Auswahlmodus"
+      }
+    }
+  }
+}
