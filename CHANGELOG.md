@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Task-backed pairing progress for fresh pairing advertisements, BLE connection
+  and authentication, with explicit German/English instructions for each phase.
+- Fresh-reception checks and Flic 2/Duo Public-mode service/connection-flag
+  filtering; Twist retains model-specific advertisement handling.
+- Regression coverage for stale advertisements, wrong devices, duplicate
+  submissions, timeouts and cancellation between or during pairing stages.
+
+### Fixed
+
+- Clarify English/German Flic 2 pairing instructions: hold during the attempt,
+  submit the pairing form before waiting for a connection, and confirm success
+  in HA rather than from the LED alone. Remove the misleading ten-second promise
+  from setup text and distinguish advertising from pairing mode.
+
 ## [1.0.0] - 2026-09-20
 
 First stable release as an independently maintained custom integration.

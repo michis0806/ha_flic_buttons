@@ -5,13 +5,19 @@
       "no_devices_found": "Keine Geräte gefunden"
     },
     "error": {
-      "cannot_connect": "Verbindung zum Gerät fehlgeschlagen. Stelle sicher, dass es in Reichweite ist, und versuche es erneut.",
-      "invalid_signature": "Ungültige Gerätesignatur beim Koppeln.",
-      "pairing_failed": "Koppeln fehlgeschlagen. Stelle sicher, dass sich das Gerät im Kopplungsmodus befindet (LED blinkt), und versuche es erneut.",
-      "unknown": "Beim Koppeln ist ein unerwarteter Fehler aufgetreten."
+      "cannot_connect": "Bluetooth-Verbindung fehlgeschlagen. Button loslassen. Reichweite zum Adapter prüfen und eine Verbindung zu Hub oder Smartphone trennen. Danach erneut absenden und den Button gedrückt halten.",
+      "invalid_signature": "Authentifizierung des Geräts fehlgeschlagen. Button loslassen. Es wurde keine Kopplung gespeichert.",
+      "pairing_failed": "Kopplung abgelehnt. Button loslassen, erneut absenden und den Flic 2 mindestens 6 Sekunden gedrückt halten. Eine Bluetooth-Verbindung allein bedeutet noch keine erfolgreiche Kopplung.",
+      "unknown": "Beim Koppeln ist ein unerwarteter Fehler aufgetreten. Button loslassen und erneut versuchen.",
+      "pairing_mode_timeout": "Kein frisches Kopplungssignal empfangen. Button loslassen, erneut absenden und den Flic 2 nahe am verbindungsfähigen Adapter mindestens 6 Sekunden gedrückt halten. Eine Verbindung zu Hub oder Smartphone vorher trennen."
     },
     "progress": {
-      "wait_for_discovery": "Halte den Flic gedrückt, bis er sich verbindet. Das dauert in der Regel nur wenige Sekunden …"
+      "wait_for_discovery": "Suche nach einem Flic. Halte ihn nahe am Bluetooth-Adapter gedrückt (Flic 2: mindestens 6 Sekunden). Nach einem frischen Bluetooth-Signal geht es automatisch weiter.",
+      "wait_for_pairing": "{name} wurde gefunden. Warte auf ein frisches Kopplungssignal: Button drücken und mindestens 6 Sekunden gedrückt halten. Eine Verbindung zu Hub oder Smartphone vorher trennen. Home Assistant fährt automatisch fort.",
+      "connect": "Kopplungssignal von {name} empfangen. Bluetooth-Verbindung wird aufgebaut … Button weiter gedrückt halten; die Kopplung ist noch nicht abgeschlossen.",
+      "authenticate": "Bluetooth-Verbindung mit {name} hergestellt. Kopplung wird geprüft und gespeichert … Weiter gedrückt halten, bis Home Assistant Erfolg oder einen Fehler meldet, dann loslassen.",
+      "wait_for_twist": "{name} wurde gefunden. Warte auf ein frisches Bluetooth-Signal. Den Twist-Button nahe am Adapter gedrückt halten und eine Verbindung zum Hub vorher trennen.",
+      "connect_twist": "Frisches Bluetooth-Signal von {name} empfangen. Verbindung wird aufgebaut … Die Kopplung ist noch nicht abgeschlossen."
     },
     "step": {
       "bluetooth_confirm": {
@@ -19,7 +25,7 @@
         "title": "Flic-Gerät gefunden"
       },
       "pair": {
-        "description": "Halte den Flic gedrückt, bis er sich verbindet. Bestätige danach dieses Formular, um das Koppeln mit {name} abzuschließen.",
+        "description": "Absenden, um die Kopplung mit {name} zu starten, dann den Button drücken und gedrückt halten (Flic 2: mindestens 6 Sekunden). Home Assistant zeigt an, wann das Kopplungssignal empfangen, die Bluetooth-Verbindung aufgebaut und die Kopplung geprüft wird. Bei Erfolg oder Fehler loslassen. Du musst den Verbindungszustand nicht an der LED erkennen.",
         "title": "Mit Flic-Gerät koppeln"
       },
       "user": {

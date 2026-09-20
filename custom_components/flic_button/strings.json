@@ -5,13 +5,19 @@
       "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]"
     },
     "error": {
-      "cannot_connect": "Failed to connect to the device. Make sure it is in range and try again.",
-      "invalid_signature": "Invalid device signature during pairing.",
-      "pairing_failed": "Pairing failed. Please ensure the device is in pairing mode (LED flashing) and try again.",
-      "unknown": "An unexpected error occurred during pairing."
+      "cannot_connect": "Bluetooth connection failed. Release the button. Check the adapter range and disconnect any hub or phone using the button, then submit again and hold the button.",
+      "invalid_signature": "Device authentication failed. Release the button. No pairing was saved.",
+      "pairing_failed": "Pairing was rejected. Release the button, submit again and hold your Flic 2 for at least 6 seconds. A Bluetooth connection alone does not mean pairing succeeded.",
+      "unknown": "An unexpected error occurred during pairing. Release the button and try again.",
+      "pairing_mode_timeout": "No fresh pairing signal was received. Release the button, submit again and hold your Flic 2 for at least 6 seconds near the connectable adapter. Disconnect any hub or phone using it."
     },
     "progress": {
-      "wait_for_discovery": "Push and hold your Flic until it connects. This should take no longer than 10 seconds…"
+      "wait_for_discovery": "Searching for a Flic. Press and keep holding it near the Bluetooth adapter (Flic 2: at least 6 seconds). Setup proceeds automatically when a fresh advertisement is received.",
+      "wait_for_pairing": "{name} has been discovered. Waiting for a fresh pairing signal: press and keep holding the button for at least 6 seconds. Disconnect any hub or phone using it. Home Assistant will continue automatically.",
+      "connect": "Pairing signal received from {name}. Establishing the Bluetooth connection… Keep holding the button; pairing is not complete yet.",
+      "authenticate": "Bluetooth connected to {name}. Verifying and saving the pairing… Keep holding until Home Assistant reports success or an error, then release.",
+      "wait_for_twist": "{name} has been discovered. Waiting for a fresh Bluetooth advertisement. Keep holding the Twist button near the adapter and disconnect any hub using it.",
+      "connect_twist": "Fresh Bluetooth advertisement received from {name}. Establishing the connection… Pairing is not complete yet."
     },
     "step": {
       "bluetooth_confirm": {
@@ -19,7 +25,7 @@
         "title": "Discovered Flic device"
       },
       "pair": {
-        "description": "Push and hold your Flic until it connects. This should take no longer than 10 seconds. Then submit this form to complete pairing with {name}.",
+        "description": "Submit to start pairing with {name}, then press and keep holding the button (Flic 2: at least 6 seconds). Home Assistant will show when the pairing signal is received, Bluetooth connects and authentication runs. Release on success or error. You do not need to judge the LED or count down to a connection.",
         "title": "Pair with Flic device"
       },
       "user": {

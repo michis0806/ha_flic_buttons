@@ -126,21 +126,42 @@ takes a little longer.
 
 ## Pairing
 
+### Flic 2: hold while pairing
+
 1. Keep the button close to the **connectable adapter**, not just a Shelly receiver.
+   Disconnect any phone or hub currently holding its Bluetooth connection.
 2. Settings → Devices & services: configure the discovered Flic, or choose
    *Add integration* → **Flic**.
-3. Hold the physical button for **about seven seconds**, then release it.
-4. If the pairing form is shown, submit it immediately; do not wait for green.
+3. If a pairing form is shown, **submit it to start listening**, then press and
+   **keep holding** the physical button (previously paired Flic 2: **at least six
+   seconds**). Manual discovery can start this automatically without another form.
+4. Follow the status in HA: **waiting for a fresh pairing signal → Bluetooth
+   connection being established → Bluetooth connected, authentication in progress**.
+   These are actual setup phases, not a countdown or a detected physical press.
+5. As a practical setup procedure, keep holding through the attempt until
+   **Home Assistant confirms successful setup**, then release. If HA reports an
+   error, release the button and start a fresh attempt; do not hold indefinitely.
+6. Press once briefly and verify that HA receives a `click` event.
 
-The button accepts new pairings in public mode for **up to 30 seconds** after
-the long press. This differs from the integration's connection timeout. See the
+The Flic 2 Public-mode service UUID is the pairing signal. Setup waits for a new
+reception from a connectable receiver rather than trusting an old discovery entry;
+it also rejects the manufacturer's "already connected" flag when available.
+This signals a pairing attempt is possible, not that authentication will succeed.
+Twist uses its own service and has generic advertisement/connection status text.
+Setup scanning is bounded and stopped on success, timeout or cancellation.
+See the [Flic protocol's advertising format](https://github.com/50ButtonsEach/flic2-documentation/wiki/Flic-2-Protocol-Specification#advertising).
+
+The manufacturer specifies a long press to enter public mode, not a requirement
+to hold until orange flashing stops. New pairings are accepted for **up to 30
+seconds after entering public mode**; do not assume continued holding extends
+this window. This differs from the integration's connection timeout. See the
 [official Flic 2 overview](https://github.com/50ButtonsEach/flic2-documentation/wiki/Technical-Overview-and-Terminology).
 
 Orange/yellow flashing indicates advertising without a connection; red can occur
-when no pairing is stored. Green on a press indicates a Bluetooth connection,
+when no pairing is stored. **Flashing stopping by itself is not proof of pairing.**
+Green on a press indicates a Bluetooth connection,
 **not necessarily successful HA authentication**. Use the setup result and actual
-click events to confirm success. Disconnect any phone or hub holding the button's
-physical connection before pairing here.
+click events to confirm success.
 
 A Flic can hold several pairings, so pairing with Home Assistant does not remove an
 existing pairing with the Flic app or a hub.
@@ -275,15 +296,43 @@ Installation über HACS (Custom Repository) oder manuell nach
 `config/custom_components/`, danach Neustart. Der erste Start dauert länger, weil
 `pyflic-ble` nachinstalliert wird.
 
-1. Button nahe an den **verbindungsfähigen Adapter** legen.
-2. Den gefundenen Flic konfigurieren oder *Integration hinzufügen* → **Flic**.
-3. Den physischen Button **sieben Sekunden gedrückt halten**, dann loslassen.
-4. Falls das Kopplungsformular angezeigt wird, **sofort absenden**.
+#### Flic 2: während des Koppelns gedrückt halten
 
-Der Kopplungsmodus bleibt nur bis zu **30 Sekunden** aktiv; die Zeitlimits der
-Integration sind davon unabhängig. Orange/gelb zeigt Senden ohne Verbindung;
-Rot kann bei fehlenden Kopplungen auftreten. Grün beim Klick beweist eine
-Bluetooth-Verbindung, aber noch keine erfolgreiche HA-Kopplung.
+1. Button nahe an den **verbindungsfähigen Adapter** legen. Eine bestehende
+   Bluetooth-Verbindung zu einem Hub oder Smartphone vorher trennen.
+2. Den gefundenen Flic konfigurieren oder *Integration hinzufügen* → **Flic**.
+3. Falls das Kopplungsformular erscheint, **absenden, um die Suche zu starten**.
+   Dann den physischen Button drücken und **gedrückt halten** (bereits gekoppelter
+   Flic 2: **mindestens sechs Sekunden**). Bei manueller Suche kann dies ohne ein
+   weiteres Formular automatisch starten.
+4. Den Status in HA verfolgen: **Warten auf frisches Kopplungssignal →
+   Bluetooth-Verbindung wird aufgebaut → Bluetooth verbunden, Kopplung wird
+   geprüft**. Das sind tatsächliche Phasen, kein Countdown und keine direkte
+   Erkennung des Tastendrucks.
+5. Als praktische Vorgehensweise den Button während des Versuchs weiter halten,
+   bis **Home Assistant die erfolgreiche Einrichtung bestätigt**, dann loslassen.
+   Meldet HA einen Fehler, loslassen und einen neuen Versuch starten – nicht
+   unbegrenzt weiter gedrückt halten.
+6. Anschließend einmal kurz drücken und prüfen, ob HA ein `click`-Event empfängt.
+
+Das Kopplungssignal ist die vom Flic 2 im Public-Modus gesendete Service-Kennung.
+Die Einrichtung wartet auf einen frischen Empfang über einen verbindungsfähigen
+Empfänger; ein alter Erkennungseintrag genügt nicht. Meldet der Button zusätzlich
+„bereits verbunden“, wird das Signal nicht als bereit für die Verbindung gewertet.
+Eine erfolgreiche Authentifizierung ist damit noch nicht garantiert. Für Twist
+gelten eigene, allgemeinere Statusmeldungen. Der Setup-Scan ist zeitlich begrenzt
+und wird bei Erfolg, Zeitüberschreitung oder Abbruch beendet.
+
+Der Hersteller beschreibt den langen Druck zum Aktivieren des Kopplungsmodus,
+nicht „halten, bis Orange ausgeht“ als notwendiges Kriterium. Dieser Modus bleibt
+ab seiner Aktivierung bis zu **30 Sekunden** offen; weiteres Gedrückthalten ist
+keine zugesicherte Verlängerung. Die Zeitlimits der Integration sind davon
+unabhängig. Siehe die [offizielle Flic-2-Dokumentation](https://github.com/50ButtonsEach/flic2-documentation/wiki/Technical-Overview-and-Terminology).
+
+Orange/gelb bedeutet Senden ohne Verbindung; Rot kann bei fehlenden Kopplungen
+auftreten. **Dass das Blinken endet, beweist allein keine erfolgreiche Kopplung.**
+Grün beim Klick zeigt eine Bluetooth-Verbindung, aber noch keine erfolgreiche
+HA-Authentifizierung. Maßgeblich sind die HA-Erfolgsmeldung und empfangene Events.
 
 Ein Flic kann mehrere Kopplungen speichern — die Kopplung mit der Flic-App oder
 einem Hub bleibt also bestehen.
