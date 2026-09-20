@@ -98,7 +98,8 @@ See [HA's Event received guide](https://www.home-assistant.io/triggers/event.rec
 
 - Home Assistant **2026.9** or newer.
 - A **connectable** Bluetooth adapter in range of the button: the host's own
-  adapter, or an ESPHome Bluetooth proxy with `active: true`.
+  adapter, or a compatible active Bluetooth proxy, such as ESPHome with
+  `active: true` under `bluetooth_proxy` (see the configuration below).
 
 That second point is the one that bites. Flic 2 is connection-oriented — it does
 not broadcast its events as advertisements. Proxies that only forward
@@ -107,6 +108,46 @@ discovery and RSSI, but not the active connection required by the button.
 
 The integration maintains a BLE connection for each button. Connection slots are
 shared with other BLE devices; capacity depends on the adapter/proxy configuration.
+
+### Bluetooth hardware matters
+
+**Reliable Bluetooth hardware is a prerequisite, especially with several Flics.**
+An adapter being detected by HA, discovering a button or connecting one Flic does
+not prove it can maintain all required connections. Reconnect logic cannot
+compensate for an unreliable adapter, driver or radio link.
+
+- Choose the exact model/chip revision from Home Assistant's
+  [known working high-performance adapters](https://www.home-assistant.io/integrations/bluetooth/#known-working-high-performance-adapters)
+  and check its [unsupported list](https://www.home-assistant.io/integrations/bluetooth/#unsupported-adapters).
+  A higher Bluetooth version number alone is not a compatibility guarantee.
+- Position the adapter near the buttons. Use a short USB extension to move a USB
+  adapter away from the host and interference, or place active proxies closer to
+  the devices. Passive receivers do not add connection capacity.
+- Budget **one persistent connection slot per Flic**, plus capacity for other BLE
+  clients. ESP32 ESPHome proxies default to three slots; one such proxy alone
+  cannot maintain four Flic sessions. Add another reachable active proxy if
+  needed. See [ESPHome connection limits](https://esphome.io/components/bluetooth_proxy/#how-active-connections-work).
+
+For ESPHome, active connection support is configured as:
+
+```yaml
+bluetooth_proxy:
+  active: true
+```
+
+This is **not** the BLE tracker's active scanning setting. Receiving advertisements
+and forwarding active GATT connections are separate capabilities.
+
+In one tested setup, an ATS2851 USB adapter (`10d7:b012`) repeatedly failed to
+maintain a fourth Flic connection while three worked. This is an observation about
+that adapter/stack, **not a universal three-connection hardware limit**. Adding
+active proxies enabled all four buttons to be available simultaneously; long-term
+stability still needs verification.
+
+If adding a button appears to disconnect another, check connection capacity,
+the actual connected adapter and its range before resetting pairings. Compare
+HA's connection diagnostics with the proxy's own counters; they may disagree.
+Verify fresh clicks from every button, not just discovery or cached RSSI.
 
 ## Installation
 
@@ -290,7 +331,8 @@ verarbeitet beide und ignoriert reine „unbekannt“-/„nicht verfügbar“-Ü
 
 - Home Assistant **2026.9** oder neuer.
 - Ein **verbindungsfähiger** Bluetooth-Adapter in Reichweite: der Adapter des
-  Hosts oder ein ESPHome-Proxy mit `active: true`.
+  Hosts oder ein kompatibler aktiver Bluetooth-Proxy, beispielsweise ESPHome mit
+  `active: true` unter `bluetooth_proxy`.
 
 Der zweite Punkt ist der entscheidende. Flic 2 ist verbindungsorientiert und sendet
 seine Ereignisse nicht als Advertisements. Proxies, die nur Advertisements
@@ -299,6 +341,43 @@ Erkennung und RSSI beisteuern, aber keine aktive Flic-Verbindung herstellen.
 
 Die Integration hält eine BLE-Verbindung pro Button. Die verfügbaren Plätze
 werden mit anderen BLE-Geräten geteilt; ihre Anzahl hängt vom Adapter/Proxy ab.
+
+#### Die Bluetooth-Hardware ist entscheidend
+
+**Zuverlässige Bluetooth-Hardware ist eine Voraussetzung, besonders bei mehreren
+Flics.** Dass HA den Adapter erkennt, Buttons findet oder einen einzelnen Flic
+verbindet, beweist noch keinen stabilen Betrieb mit allen Geräten. Automatische
+Wiederverbindung kann einen unzuverlässigen Adapter, Treiber oder Funkweg nicht
+ausgleichen.
+
+- Die genaue Modell-/Chipvariante anhand der
+  [HA-Liste bewährter High-Performance-Adapter](https://www.home-assistant.io/integrations/bluetooth/#known-working-high-performance-adapters)
+  auswählen und die [nicht unterstützten Adapter](https://www.home-assistant.io/integrations/bluetooth/#unsupported-adapters)
+  beachten. Eine höhere Bluetooth-Versionsnummer allein ist kein Gütesiegel.
+- Adapter nahe den Buttons platzieren. Eine kurze USB-Verlängerung schafft Abstand
+  zum Rechner und Störquellen; aktive Proxys können näher an den Geräten stehen.
+  Passive Empfänger schaffen keine zusätzlichen Verbindungsplätze.
+- **Pro Flic einen dauerhaft belegten Verbindungsplatz** einplanen, zusätzlich zu
+  anderen BLE-Geräten. ESP32-ESPHome-Proxys haben standardmäßig drei Plätze. Ein
+  solcher Proxy allein kann daher nicht vier Flic-Verbindungen halten. Bei Bedarf
+  einen weiteren erreichbaren aktiven Proxy ergänzen. Siehe die
+  [ESPHome-Verbindungsgrenzen](https://esphome.io/components/bluetooth_proxy/#how-active-connections-work).
+
+Bei ESPHome muss `active: true` unter **`bluetooth_proxy`** stehen; das
+YAML-Beispiel im englischen Abschnitt zeigt die Konfiguration. Aktives Scannen
+im BLE-Tracker ist etwas anderes und ermöglicht allein keine GATT-Verbindungen.
+
+In einem getesteten Aufbau scheiterte ein ATS2851-USB-Adapter (`10d7:b012`)
+wiederholt an einer vierten Flic-Verbindung, während drei funktionierten. Das ist
+eine Beobachtung zu diesem Adapter/Software-Stack, **keine allgemeine
+Drei-Verbindungen-Grenze des Chips**. Mit zusätzlichen aktiven Proxys waren alle
+vier Buttons gleichzeitig verfügbar; die Langzeitstabilität ist noch zu prüfen.
+
+Scheint ein neuer Button einen anderen zu verdrängen, zuerst Kapazität, den
+tatsächlich verbundenen Adapter und dessen Reichweite prüfen, nicht sofort die
+Kopplungen zurücksetzen. HA-Verbindungsdiagnose und Proxy-eigene Zähler können
+voneinander abweichen. Frische Klicks aller Buttons prüfen; Erkennung und
+zwischengespeicherter RSSI allein genügen nicht.
 
 ### Installation und Kopplung
 
