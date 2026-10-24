@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-24
+
+### Added
+
+- Opt-in connection diagnostics for Bleak and BlueZ connection/service state,
+  with bounded, read-only observations and setup instructions.
+
+### Fixed
+
+- Wake reconnect attempts from fresh Bluetooth cache receptions even when
+  identical advertisements are deduplicated before callbacks.
+
+- Configure Flic 2/Duo reconnect advertising using the official SDK's intervals
+  and 24-hour window, for firmware version 7 or newer. Wait for response opcode
+  25 and reapply after a button reboot or Home Assistant client recreation.
+- Answer Flic 2/Duo ping requests with signed responses. Recover terminated
+  logical sessions even if the BLE link stays connected, and cancel pending
+  session-control work before replacing the transport or unloading.
+- Require an acknowledged, complete event initialization before marking a
+  session available; close and retry failed startup attempts.
+- Add offline protocol/lifecycle regressions against pinned pyflic-ble 0.2.5.
+  Hardware restart and long-running connection tests remain to be performed.
+
 ## [1.0.2] - 2026-09-20
 
 ### Fixed

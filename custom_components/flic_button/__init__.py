@@ -1,6 +1,8 @@
 """The Flic Button integration."""
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from time import monotonic
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth.match import BluetoothCallbackMatcher
@@ -8,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
 from pyflic_ble import (
     DeviceType,
     FlicState,
@@ -29,6 +32,8 @@ PLATFORMS: list[Platform] = [
     Platform.EVENT,
     Platform.SENSOR,
 ]
+RECONNECT_CHECK_INTERVAL = timedelta(seconds=5)
+RECONNECT_ADVERTISEMENT_MAX_AGE = 15
 
 
 @dataclass
@@ -96,13 +101,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -
 
     entry.async_on_unload(client.register_state_callback(_async_update_device))
 
+    # HA updates its cache even when identical advertisement payloads are not
+    # dispatched to callbacks. Flic's private advertisements can be unchanged
+    # across clicks, so use their receive times as a fallback wake-up signal.
+    last_advertisement_time = monotonic()
+
     @callback
     def _async_bluetooth_callback(
         service_info: bluetooth.BluetoothServiceInfoBleak,
         change: bluetooth.BluetoothChange,
     ) -> None:
         """Handle Bluetooth updates for connection/reconnection."""
+        nonlocal last_advertisement_time
         if service_info.connectable:
+            last_advertisement_time = max(
+                last_advertisement_time, service_info.time
+            )
             client.set_ble_device(service_info.device)
 
     entry.async_on_unload(
@@ -113,6 +127,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: FlicButtonConfigEntry) -
             bluetooth.BluetoothScanningMode.ACTIVE,
         )
     )
+
+    polling_active = True
+
+    @callback
+    def _async_check_fresh_advertisement(_now: datetime) -> None:
+        """Wake the existing retry loop once for each fresh cached reception."""
+        nonlocal last_advertisement_time
+        # Do not disturb healthy sessions or a link still authenticating.
+        if not polling_active or client.state.connected or client.is_connected:
+            return
+        service_info = bluetooth.async_last_service_info(
+            hass, address, connectable=True
+        )
+        if (
+            service_info is None
+            or not service_info.connectable
+            or service_info.address.upper() != address
+            or service_info.time <= last_advertisement_time
+            or not (
+                0 <= monotonic() - service_info.time <= RECONNECT_ADVERTISEMENT_MAX_AGE
+            )
+        ):
+            return
+        last_advertisement_time = service_info.time
+        client.set_ble_device(service_info.device)
+
+    cancel_reconnect_check = async_track_time_interval(
+        hass, _async_check_fresh_advertisement, RECONNECT_CHECK_INTERVAL
+    )
+
+    @callback
+    def _async_stop_reconnect_check() -> None:
+        nonlocal polling_active
+        polling_active = False
+        cancel_reconnect_check()
+
+    entry.async_on_unload(_async_stop_reconnect_check)
 
     # Reload entry when options change (e.g. push_twist_mode)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))

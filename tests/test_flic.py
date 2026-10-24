@@ -6,13 +6,14 @@ Run with Python 3.14 and the repository's requirements-test.txt.
 
 import asyncio
 import importlib
+import logging
 import struct
 import sys
 import types
 from pathlib import Path
 from time import monotonic
 from typing import ClassVar
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from bleak import BleakError
@@ -83,11 +84,19 @@ def make_packet_client(device_type):
     client._state = SessionState.SESSION_ESTABLISHED
     client._connection_id = 3
     client._chaskey_keys = chaskey_generate_subkeys(bytes(range(16)))
+
+    async def init_response(opcodes):
+        opcode = opcodes[0]
+        response = bytearray(client_module._INIT_RESPONSES[opcode])
+        response[0:2] = bytes([3, opcode])
+        client._response_queue.put_nowait(bytes(response))
+        return await client._wait_for_handler_opcodes(opcodes)
+
     client.handler.bind_transport(
         write_gatt=AsyncMock(),
         write_packet=client._write_packet,
         wait_for_opcode=AsyncMock(return_value=b"\x00\x00"),
-        wait_for_opcodes=AsyncMock(return_value=b"\x00\x00"),
+        wait_for_opcodes=init_response,
     )
     return client
 
@@ -323,6 +332,106 @@ async def test_parallel_connect_calls_use_one_transport(transport):
 
 
 @pytest.mark.asyncio
+async def test_connection_observations_are_opt_in(transport, monkeypatch, caplog):
+    caplog.set_level(logging.WARNING, logger=client_module.__name__)
+    diagnostics = Mock()
+    monkeypatch.setattr(client_module, "ConnectionDiagnostics", diagnostics)
+    client = make_client(pairing_only=True)
+    await client.connect()
+    diagnostics.assert_not_called()
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_successful_connect_also_stops_diagnostic_task(
+    transport, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger=client_module.__name__)
+    observations = []
+    observer_type = client_module.ConnectionDiagnostics
+
+    def create_observer(*args):
+        result = observer_type(*args)
+        observations.append(result)
+        return result
+
+    monkeypatch.setattr(client_module, "ConnectionDiagnostics", create_observer)
+    client = make_client(pairing_only=True)
+    await asyncio.gather(client.connect(), client.connect())
+    assert len(observations) == 1
+    assert observations[0]._task is None
+    assert client.is_connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_connection_timeout_includes_observed_link_and_stops_task(
+    transport, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger=client_module.__name__)
+    monkeypatch.setattr(client_module, "CONNECT_TIMEOUT", 0.02)
+    observations = []
+    observer_type = client_module.ConnectionDiagnostics
+
+    def create_observer(*args):
+        result = observer_type(*args)
+        observations.append(result)
+        return result
+
+    monkeypatch.setattr(client_module, "ConnectionDiagnostics", create_observer)
+
+    async def hang(link):
+        link.is_connected = True
+        await asyncio.Event().wait()
+
+    transport.connect_effect = hang
+    client = make_client(pairing_only=True)
+    with pytest.raises(FlicProtocolError, match="link_seen=True") as error:
+        await client.connect()
+    assert "bluez_connected=None" in str(error.value)
+    assert observations[0]._task is None
+    assert client._client is None
+
+
+@pytest.mark.asyncio
+async def test_cancelling_connect_stops_diagnostic_task(transport, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger=client_module.__name__)
+    observations = []
+    observer_type = client_module.ConnectionDiagnostics
+
+    def create_observer(*args):
+        result = observer_type(*args)
+        observations.append(result)
+        return result
+
+    monkeypatch.setattr(client_module, "ConnectionDiagnostics", create_observer)
+    entered = asyncio.Event()
+
+    async def hang(_link):
+        entered.set()
+        await asyncio.Event().wait()
+
+    transport.connect_effect = hang
+    client = make_client(pairing_only=True)
+    task = asyncio.create_task(client.connect())
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert observations[0]._task is None
+    assert client._client is None
+
+
+@pytest.mark.asyncio
+async def test_connection_parameter_error_identifies_separate_stage(transport):
+    client = make_client(pairing_only=True)
+    client._request_connection_parameters = AsyncMock(side_effect=BleakError("params"))
+    with pytest.raises(FlicProtocolError, match="connection parameter request"):
+        await client.connect()
+    assert transport.instances[0].disconnects == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "stage", ["quick_verify", "init_button_events", "_send_connection_parameters"]
 )
@@ -346,6 +455,12 @@ async def test_incomplete_runtime_session_disconnects_and_can_retry(transport, s
     assert not client.is_connected
     assert transport.instances[0].disconnects == 1
     getattr(client, stage).side_effect = None
+
+    async def authenticated():
+        client._state = SessionState.SESSION_ESTABLISHED
+
+    client.quick_verify.side_effect = authenticated
+    client._configure_reconnect_advertising = AsyncMock()
     client.set_ble_device(client.ble_device)
     await asyncio.wait_for(client._reconnect_task, 2)
     assert client.state.connected
@@ -838,3 +953,320 @@ def test_configured_device_is_not_selected_again(flow_module):
     flow = make_flow(flow_module)
     flow._async_current_ids = lambda **kwargs: {flow._discovery_info.address}
     assert not flow._is_unconfigured_flic_device(flow._discovery_info)
+
+
+@pytest.fixture
+def session_peer(request):
+    """Exercise real startup, handlers and MAC signing against a fake BLE peer."""
+    client = make_client(
+        pairing_id=123,
+        pairing_key=bytes(range(16)),
+        device_type=getattr(request, "param", DeviceType.FLIC2),
+    )
+    peer = types.SimpleNamespace(
+        is_connected=False, firmware=11, boot_id=1234, ignored=set(), writes=[]
+    )
+
+    async def disconnect():
+        peer.is_connected = False
+
+    async def connect():
+        peer.is_connected = True
+        client._client = peer
+        client._state = SessionState.CONNECTED
+        client._intentional_disconnect = False
+        client.handler.bind_transport(
+            write_gatt=client._write_gatt,
+            write_packet=client._write_packet,
+            wait_for_opcode=client._wait_for_handler_opcode,
+            wait_for_opcodes=client._wait_for_handler_opcodes,
+        )
+
+    async def verify():
+        client._state = SessionState.SESSION_ESTABLISHED
+        client._connection_id = 3
+        client.handler.connection_id = 3
+        client._chaskey_keys = chaskey_generate_subkeys(bytes(range(16)))
+        client._packet_counter_to_button = 0
+
+    def notify(opcode, payload=b"", header=3):
+        # Upstream 0.2.5 strips incoming MACs without checking them. Outbound
+        # MACs are asserted separately; these are deliberately dummy tails.
+        client._notification_handler(
+            None, bytearray([header, opcode]) + payload + bytes(5)
+        )
+
+    async def write(_uuid, packet):
+        packet = bytes(packet)
+        peer.writes.append(packet)
+        opcode = packet[1]
+        if opcode in peer.ignored:
+            return
+        if opcode in (23, 35):
+            payload = bytes(6) + bytes(8 if opcode == 35 else 4)
+            notify(
+                30 if opcode == 35 else 10, payload + struct.pack("<I", peer.boot_id)
+            )
+        elif opcode == 20:
+            notify(20, struct.pack("<H", 900))
+        elif opcode == 8:
+            notify(5, struct.pack("<I", peer.firmware))
+        elif opcode == 11:
+            notify(16, bytes(6) + b"Test Flic")
+        elif opcode == 27:
+            # Official SDK RxPacket.SET_ADV_PARAMETERS_RESPONSE (wiki typo: 27).
+            notify(25)
+
+    peer.disconnect = AsyncMock(side_effect=disconnect)
+    peer.write_gatt_char = AsyncMock(side_effect=write)
+    peer.notify = notify
+    client.connect = AsyncMock(side_effect=connect)
+    client.quick_verify = AsyncMock(side_effect=verify)
+    client.handler.bind_transport(
+        write_gatt=client._write_gatt,
+        write_packet=client._write_packet,
+        wait_for_opcode=client._wait_for_handler_opcode,
+        wait_for_opcodes=client._wait_for_handler_opcodes,
+    )
+    return client, peer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "session_peer", [DeviceType.FLIC2, DeviceType.DUO], indirect=True
+)
+async def test_sdk_advertising_is_signed_acknowledged_and_reapplied_after_reboot(
+    session_peer,
+):
+    client, peer = session_peer
+    states = []
+    client.register_state_callback(lambda state: states.append(state.connected))
+    await client.start()
+    assert client.state.connected
+    assert client._boot_id == 1234
+    assert states == [True]
+    advertising = [packet for packet in peer.writes if packet[1] == 27]
+    assert len(advertising) == 1
+    body, signature = advertising[0][:-5], advertising[0][-5:]
+    assert body == bytes.fromhex("031b010001004000640680510100")
+    counter = peer.writes.index(advertising[0])
+    assert signature == chaskey_with_dir_and_counter(
+        client._chaskey_keys, direction=1, counter=counter, data=body[1:]
+    )
+    await client.disconnect()
+    await client.start()
+    assert len([packet for packet in peer.writes if packet[1] == 27]) == 1
+    peer.boot_id += 1
+    await client.disconnect()
+    await client.start()
+    assert len([packet for packet in peer.writes if packet[1] == 27]) == 2
+    await client.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("firmware", [0, 6])
+async def test_older_firmware_starts_without_advertising_request(
+    session_peer, firmware
+):
+    client, peer = session_peer
+    peer.firmware = firmware
+    await client.start()
+    assert client.state.connected
+    assert all(packet[1] != 27 for packet in peer.writes)
+    await client.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fragmented", [False, True])
+async def test_ping_gets_signed_response_without_polluting_command_queue(
+    session_peer, fragmented
+):
+    client, peer = session_peer
+    await client.start()
+    counter = client._packet_counter_to_button
+    if fragmented:
+        client._notification_handler(None, bytearray([0x83, 15, 0, 0]))
+        # An unrelated session cannot contribute bytes to our fragment buffer.
+        peer.notify(15, header=4)
+        client._notification_handler(None, bytearray([3, 0, 0, 0]))
+    else:
+        peer.notify(15)
+    await asyncio.wait_for(asyncio.gather(*client._session_tasks), 1)
+    packet = peer.writes[-1]
+    assert packet[:2] == b"\x03\x0e"
+    assert packet[2:] == chaskey_with_dir_and_counter(
+        client._chaskey_keys, direction=1, counter=counter, data=b"\x0e"
+    )
+    assert client._response_queue.empty()
+    assert client.state.connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_controls_for_other_sessions_and_truncated_controls_are_ignored(
+    session_peer,
+):
+    client, peer = session_peer
+    await client.start()
+    before = len(peer.writes)
+    peer.notify(15, header=0)
+    peer.notify(9, b"\x00", header=4)
+    peer.notify(9)  # No reason field.
+    client._notification_handler(None, bytearray([3, 15]))  # No MAC.
+    await asyncio.sleep(0)
+    assert not client._session_tasks
+    assert len(peer.writes) == before
+    assert client.state.connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_terminated_session_reconnects_even_when_ble_link_stays_open(
+    session_peer,
+):
+    client, peer = session_peer
+    await client.start()
+    peer.notify(9, b"\x00")  # PING_TIMEOUT
+    peer.notify(9, b"\x00")  # Repeated packet must not spawn another recovery.
+    assert peer.is_connected
+    assert not client.state.connected
+    assert len(client._session_tasks) == 1
+    await asyncio.wait_for(asyncio.gather(*client._session_tasks), 1)
+    await asyncio.wait_for(client._reconnect_task, 1)
+    assert peer.disconnect.await_count == 1
+    assert client.quick_verify.await_count == 2
+    assert client.state.connected
+    assert client._response_queue.empty()
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_pending_ping_before_new_transport_can_be_used(session_peer):
+    client, peer = session_peer
+    await client.start()
+    entered = asyncio.Event()
+
+    async def blocked_write(*args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    peer.write_gatt_char.side_effect = blocked_write
+    peer.notify(15)
+    await asyncio.wait_for(entered.wait(), 1)
+    tasks = tuple(client._session_tasks)
+    await asyncio.wait_for(client.stop(), 1)
+    assert all(task.done() for task in tasks)
+    assert not client._session_tasks
+    assert not peer.is_connected
+    assert client._reconnect_task is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("opcode", [23, 27])
+async def test_missing_initialization_or_advertising_ack_never_marks_ready(
+    session_peer, monkeypatch, opcode
+):
+    import pyflic_ble.client as upstream_client
+    import pyflic_ble.handlers.flic2 as upstream_handler
+
+    monkeypatch.setattr(upstream_client, "COMMAND_TIMEOUT", 0.01)
+    monkeypatch.setattr(upstream_handler, "COMMAND_TIMEOUT", 0.01)
+    client, peer = session_peer
+    peer.ignored.add(opcode)
+    states = []
+    client.register_state_callback(lambda state: states.append(state.connected))
+    with pytest.raises((FlicProtocolError, TimeoutError)):
+        await client.start()
+    assert not client.is_connected
+    assert not client.state.connected
+    assert True not in states
+    peer.ignored.clear()
+    await client.start()
+    assert client.state.connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_truncated_initialization_response_fails_instead_of_becoming_available(
+    session_peer,
+):
+    client, peer = session_peer
+    original = peer.write_gatt_char.side_effect
+
+    async def write(uuid, packet):
+        if packet[1] == 23:
+            peer.notify(10, b"\x00")
+        else:
+            await original(uuid, packet)
+
+    peer.write_gatt_char.side_effect = write
+    with pytest.raises(FlicProtocolError, match="Truncated"):
+        await client.start()
+    assert not client.state.connected
+    assert not peer.is_connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_ping_write_failure_recovers_session(session_peer):
+    client, peer = session_peer
+    await client.start()
+    original = peer.write_gatt_char.side_effect
+
+    async def write(uuid, packet):
+        if packet[1] == 14:
+            raise BleakError("link write failed")
+        await original(uuid, packet)
+
+    peer.write_gatt_char.side_effect = write
+    peer.notify(15)
+    await asyncio.wait_for(asyncio.gather(*client._session_tasks), 1)
+    # The ping task creates the recovery task on failure.
+    if client._session_tasks:
+        await asyncio.wait_for(asyncio.gather(*client._session_tasks), 1)
+    await asyncio.wait_for(client._reconnect_task, 1)
+    assert client.state.connected
+    assert client.quick_verify.await_count == 2
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_stale_recovery_does_not_disconnect_replacement_session(session_peer):
+    client, peer = session_peer
+    await client.start()
+    old_generation = client._session_generation
+    await client.disconnect()
+    await client.start()
+    before = peer.disconnect.await_count
+    await client._recover_session(old_generation)
+    assert peer.disconnect.await_count == before
+    assert client.state.connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_session_loss_during_startup_cleans_up_without_recovery_deadlock(
+    session_peer, monkeypatch
+):
+    import pyflic_ble.client as upstream_client
+    import pyflic_ble.handlers.flic2 as upstream_handler
+
+    monkeypatch.setattr(upstream_client, "COMMAND_TIMEOUT", 0.01)
+    monkeypatch.setattr(upstream_handler, "COMMAND_TIMEOUT", 0.01)
+    client, peer = session_peer
+    original = peer.write_gatt_char.side_effect
+
+    async def write(uuid, packet):
+        if packet[1] == 11:
+            peer.notify(9, b"\x01")
+        else:
+            await original(uuid, packet)
+
+    peer.write_gatt_char.side_effect = write
+    with pytest.raises(FlicProtocolError, match="ended during initialization"):
+        await asyncio.wait_for(client.start(), 1)
+    assert not client.state.connected
+    assert not peer.is_connected
+    assert not client._session_tasks
+    assert client._reconnect_task is None
+    await client.stop()
