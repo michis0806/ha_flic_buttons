@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-05
+
+### Fixed
+
+- Require pyflic-ble >= 0.2.6 instead of pinning the shared Core dependency.
+  This satisfies Hassfest's shared-dependency validation and allows Home Assistant
+  to select a compatible newer version. Offline regression tests remain pinned
+  to 0.2.6 as the supported minimum.
+
 ## [1.1.1] - 2026-11-04
 
 ### Changed
