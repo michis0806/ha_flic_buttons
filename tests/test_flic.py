@@ -1,4 +1,4 @@
-"""Offline regressions against the real pyflic-ble 0.2.5 protocol client.
+"""Offline regressions against the real pyflic-ble 0.2.6 protocol client.
 
 Only BLE I/O and the Home Assistant form API are replaced by test doubles.
 Run with Python 3.14 and the repository's requirements-test.txt.
@@ -105,7 +105,7 @@ def make_packet_client(device_type):
 @pytest.mark.parametrize(
     "device_type,offset", [(DeviceType.FLIC2, 10), (DeviceType.DUO, 14)]
 )
-async def test_real_init_handlers_disable_idle_disconnect_before_signing(
+async def test_upstream_init_handlers_disable_idle_disconnect_before_signing(
     device_type, offset
 ):
     client = make_packet_client(device_type)
@@ -139,7 +139,7 @@ async def test_real_init_handlers_disable_idle_disconnect_before_signing(
     ],
 )
 @pytest.mark.parametrize("original_timeout", [0, 40, 511])
-async def test_idle_fix_preserves_every_other_packet_bit(
+async def test_packet_writes_preserve_upstream_init_fields(
     device_type, offset, request_type, original_timeout
 ):
     client = make_packet_client(device_type)
@@ -153,14 +153,11 @@ async def test_idle_fix_preserves_every_other_packet_bit(
     await client._write_packet(original)
     packet = bytes(client._client.write_gatt_char.await_args.args[1])
     actual = packet[:-5]
-    before = int.from_bytes(original, "little")
-    after = int.from_bytes(actual, "little")
-    timeout_mask = 0x1FF << (offset * 8)
-    assert after == before | timeout_mask
+    assert actual == original
     assert len(actual) == len(original)
     # There is no mutation of the caller's buffer or the upstream request class.
     assert struct.unpack_from("<Q", original, offset)[0] & 0x1FF == original_timeout
-    assert request_type(connection_id=0).auto_disconnect_time == 0
+    assert request_type(connection_id=0).auto_disconnect_time == 511
 
 
 @pytest.mark.asyncio
@@ -186,33 +183,13 @@ async def test_idle_fix_preserves_every_other_packet_bit(
         (DeviceType.DUO, InitButtonEventsDuoRequest(connection_id=0).to_bytes(), False),
     ],
 )
-async def test_idle_fix_leaves_twist_other_commands_and_unsigned_packets_unchanged(
+async def test_packet_writes_leave_other_commands_and_unsigned_packets_unchanged(
     device_type, packet, authenticated
 ):
     client = make_packet_client(device_type)
     await client._write_packet(packet, authenticated)
     actual = bytes(client._client.write_gatt_char.await_args.args[1])
     assert (actual[:-5] if authenticated else actual) == packet
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "device_type,request_type",
-    [
-        (DeviceType.FLIC2, InitButtonEventsRequest),
-        (DeviceType.DUO, InitButtonEventsDuoRequest),
-    ],
-)
-@pytest.mark.parametrize("size_change", [-1, 1])
-async def test_idle_fix_rejects_unexpected_init_layout(
-    device_type, request_type, size_change
-):
-    client = make_packet_client(device_type)
-    packet = request_type(connection_id=0).to_bytes()
-    packet = packet[:-1] if size_change < 0 else packet + b"\x00"
-    with pytest.raises(FlicProtocolError, match="Unexpected init-event packet layout"):
-        await client._write_packet(packet)
-    client._client.write_gatt_char.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -964,7 +941,13 @@ def session_peer(request):
         device_type=getattr(request, "param", DeviceType.FLIC2),
     )
     peer = types.SimpleNamespace(
-        is_connected=False, firmware=11, boot_id=1234, ignored=set(), writes=[]
+        is_connected=False,
+        firmware=11,
+        boot_id=1234,
+        ignored=set(),
+        writes=[],
+        event_count=0,
+        timestamp_ticks=120 * 32768,
     )
 
     async def disconnect():
@@ -990,7 +973,7 @@ def session_peer(request):
         client._packet_counter_to_button = 0
 
     def notify(opcode, payload=b"", header=3):
-        # Upstream 0.2.5 strips incoming MACs without checking them. Outbound
+        # Upstream 0.2.6 strips incoming MACs without checking them. Outbound
         # MACs are asserted separately; these are deliberately dummy tails.
         client._notification_handler(
             None, bytearray([header, opcode]) + payload + bytes(5)
@@ -1003,7 +986,12 @@ def session_peer(request):
         if opcode in peer.ignored:
             return
         if opcode in (23, 35):
-            payload = bytes(6) + bytes(8 if opcode == 35 else 4)
+            counts = (
+                struct.pack("<II", peer.event_count, 0)
+                if opcode == 35
+                else struct.pack("<I", peer.event_count)
+            )
+            payload = (peer.timestamp_ticks << 1).to_bytes(6, "little") + counts
             notify(
                 30 if opcode == 35 else 10, payload + struct.pack("<I", peer.boot_id)
             )
@@ -1270,3 +1258,87 @@ async def test_session_loss_during_startup_cleans_up_without_recovery_deadlock(
     assert not client._session_tasks
     assert client._reconnect_task is None
     await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_upstream_click_ack_and_event_resume_survive_local_client(session_peer):
+    client, peer = session_peer
+    await client.start()
+    events = []
+    client.register_button_event_callback(lambda kind, data: events.append(kind))
+    counter = client._packet_counter_to_button
+    # Flic 2 SINGLE_CLICK_TIMEOUT, count 42, fresh and not queued.
+    payload = struct.pack("<I", 42) + (120 * 32768).to_bytes(6, "little") + b"\x02"
+    peer.notify(12, payload)
+    await asyncio.wait_for(asyncio.gather(*client._session_tasks), 1)
+    acknowledgements = [packet for packet in peer.writes if packet[1] == 16]
+    assert len(acknowledgements) == 1
+    body = struct.pack("<BBI", 3, 16, 42)
+    assert acknowledgements[0] == body + chaskey_with_dir_and_counter(
+        client._chaskey_keys, direction=1, counter=counter, data=body[1:]
+    )
+    assert events == ["click"]
+    peer.event_count = 42
+    await client.disconnect()
+    await client.start()
+    init = [packet for packet in peer.writes if packet[1] == 23][-1]
+    assert struct.unpack_from("<II", init, 2) == (42, 1234)
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_upstream_filters_old_queued_clicks_after_ha_restart(session_peer):
+    client, peer = session_peer
+    await client.start()  # Unknown boot ID; device's clock is at 120 seconds.
+    events = []
+    client.register_button_event_callback(lambda kind, data: events.append(kind))
+    for count, seconds in [(1, 100), (2, 119)]:
+        # Both are queued; only the event less than 15 seconds old is delivered.
+        payload = (
+            struct.pack("<I", count) + (seconds * 32768).to_bytes(6, "little") + b"\x12"
+        )
+        peer.notify(12, payload)
+    await asyncio.wait_for(asyncio.gather(*client._session_tasks), 1)
+    assert events == ["click"]
+    assert len([packet for packet in peer.writes if packet[1] == 16]) == 2
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_cancels_upstream_ack_write(session_peer):
+    client, peer = session_peer
+    await client.start()
+    entered = asyncio.Event()
+    original = peer.write_gatt_char.side_effect
+
+    async def write(uuid, packet):
+        if packet[1] == 16:
+            entered.set()
+            await asyncio.Event().wait()
+        else:
+            await original(uuid, packet)
+
+    peer.write_gatt_char.side_effect = write
+    peer.notify(12, struct.pack("<I", 1) + bytes(6) + b"\x02")
+    await asyncio.wait_for(entered.wait(), 1)
+    tasks = tuple(client._session_tasks)
+    await asyncio.wait_for(client.disconnect(), 1)
+    assert all(task.done() for task in tasks)
+    assert not client._session_tasks
+    assert not client._background_tasks
+    assert not peer.is_connected
+    await client.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("opcode,length", [(30, 16), (30, 20), (31, 16), (31, 20)])
+async def test_duo_init_boot_id_is_detected_by_length_not_opcode(opcode, length):
+    client = make_packet_client(DeviceType.DUO)
+    response = bytearray(length)
+    response[0:2] = bytes([3, opcode])
+    if length == 20:
+        struct.pack_into("<I", response, 16, 1234)
+    client._response_queue.put_nowait(bytes(response))
+    await client._wait_for_handler_opcodes([opcode])
+    assert client._init_response_received
+    assert client._boot_id == (1234 if length == 20 else None)

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-04
+
+### Changed
+
+- Upgrade the runtime and test dependency to pyflic-ble 0.2.6 for upstream
+  event acknowledgements, reconnect event counters and old queued-event filtering.
+- Remove the obsolete local idle-disconnect packet rewrite; upstream now sends
+  the correct value 511. Retain bounded connection stages, reconnect advertising,
+  strict event initialization and tracked session-control recovery.
+
+### Fixed
+
+- Include upstream acknowledgement and Twist position-write tasks in local
+  transport cleanup, preventing pending writes from surviving a disconnect.
+- Detect optional Duo initialization boot IDs from response length, matching
+  upstream handling of inconsistent opcode labels.
+- Add integration-level regressions for signed acknowledgements, event resumption,
+  old-event filtering and cancellation. Radio/reboot validation remains pending.
+
 ## [1.1.0] - 2026-10-24
 
 ### Added

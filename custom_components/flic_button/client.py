@@ -1,14 +1,14 @@
-"""Flic-local connection workaround for pyflic-ble 0.2.5.
+"""Flic-local connection workaround for pyflic-ble 0.2.6.
 
 The upstream connection helper imposes a 20-second service-discovery timeout.
 Use the same Bleak transport with an explicit timeout, without changing global
-Bluetooth settings. Protocol handling uses the pinned upstream library with local Flic 2/Duo
-fixes for idle disconnect, session controls and reconnect advertising.
+Bluetooth settings. Upstream handles idle disconnect and event acknowledgements;
+local guards cover session task cleanup, initialization and reconnect advertising.
 
 Connection initialization adapted from pyflic-ble (Shortcut Labs), Apache-2.0.
 See LICENSE.pyflic-ble. Local changes: bounded connection stages, cleanup on
 failure/cancellation, and suppression of reconnects during initial pairing.
-The init-event packet correction is local to this integration, not a global patch.
+All changes are local to this integration, not global patches.
 """
 
 import asyncio
@@ -29,10 +29,8 @@ from pyflic_ble.client import SessionState
 from pyflic_ble.const import (
     FRAME_HEADER_CONN_ID_MASK,
     FRAME_HEADER_FRAGMENT_FLAG,
-    OPCODE_INIT_BUTTON_EVENTS_DUO_REQUEST,
     OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITH_BOOT_ID,
     OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITHOUT_BOOT_ID,
-    OPCODE_INIT_BUTTON_EVENTS_REQUEST,
     OPCODE_INIT_BUTTON_EVENTS_RESPONSE_WITH_BOOT_ID,
     OPCODE_INIT_BUTTON_EVENTS_RESPONSE_WITHOUT_BOOT_ID,
 )
@@ -56,12 +54,7 @@ _INIT_RESPONSES = {
     OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITH_BOOT_ID: 20,
     OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITHOUT_BOOT_ID: 16,
 }
-# Pinned pyflic-ble 0.2.5 layouts: opcode and byte offset of the packed field.
-# Includes the one-byte frame header. Twist has a different protocol.
-_INIT_EVENT_LAYOUTS = {
-    DeviceType.FLIC2: (OPCODE_INIT_BUTTON_EVENTS_REQUEST, 10),
-    DeviceType.DUO: (OPCODE_INIT_BUTTON_EVENTS_DUO_REQUEST, 14),
-}
+_FRAMED_DEVICE_TYPES = {DeviceType.FLIC2, DeviceType.DUO}
 
 
 class FlicClient(BaseFlicClient):
@@ -80,24 +73,7 @@ class FlicClient(BaseFlicClient):
         self._advertising_boot_id: int | None = None
 
     async def _write_packet(self, data: bytes, authenticated: bool = True) -> None:
-        """Disable idle disconnect in Flic 2/Duo init packets before MAC signing.
-
-        pyflic-ble 0.2.5 sends zero, but the protocol specifies 511 (all nine
-        bits set) for disabled auto-disconnect. Preserve all adjacent fields,
-        other commands, pairing packets and the entire Twist protocol.
-        https://github.com/50ButtonsEach/flic2-documentation/wiki/
-        Flic-2-Protocol-Specification#init-button-events
-        """
-        layout = _INIT_EVENT_LAYOUTS.get(self.device_type)
-        if authenticated and layout is not None and len(data) >= 2:
-            opcode, offset = layout
-            if data[1] == opcode:
-                if len(data) != offset + 8:
-                    raise FlicProtocolError("Unexpected init-event packet layout")
-                packet = bytearray(data)
-                packet[offset] = 0xFF
-                packet[offset + 1] |= 0x01
-                data = bytes(packet)
+        """Serialize protocol writes without altering upstream packet contents."""
         # A ping response must not interleave a fragmented protocol write.
         async with self._write_lock:
             if authenticated and self._state != SessionState.SESSION_ESTABLISHED:
@@ -154,7 +130,10 @@ class FlicClient(BaseFlicClient):
         """Require an acknowledgement even if upstream's outer timeout wins."""
         self._init_response_received = False
         await super().init_button_events()
-        if self.device_type in _INIT_EVENT_LAYOUTS and not self._init_response_received:
+        if (
+            self.device_type in _FRAMED_DEVICE_TYPES
+            and not self._init_response_received
+        ):
             raise FlicProtocolError("Flic event initialization was not acknowledged")
 
     async def _configure_reconnect_advertising(self) -> None:
@@ -164,7 +143,7 @@ class FlicClient(BaseFlicClient):
         does not support this request. Reapply after a button or HA reboot.
         See the official Flic 2 protocol's Changing Advertising Parameters.
         """
-        if self.device_type not in _INIT_EVENT_LAYOUTS:
+        if self.device_type not in _FRAMED_DEVICE_TYPES:
             return
         firmware = self._flic_state.firmware_version
         if firmware is None or firmware < 7:
@@ -199,25 +178,33 @@ class FlicClient(BaseFlicClient):
             response = await super()._wait_for_handler_opcodes(opcodes)
         except TimeoutError as err:
             if (
-                self.device_type in _INIT_EVENT_LAYOUTS
+                self.device_type in _FRAMED_DEVICE_TYPES
                 and set(opcodes) & _INIT_RESPONSES.keys()
             ):
                 raise FlicProtocolError("Flic event initialization timed out") from err
             raise
-        if self.device_type in _INIT_EVENT_LAYOUTS and len(response) >= 2:
+        if self.device_type in _FRAMED_DEVICE_TYPES and len(response) >= 2:
             opcode = response[1]
             if opcode in _INIT_RESPONSES:
-                if len(response) < _INIT_RESPONSES[opcode]:
+                is_duo = opcode in (
+                    OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITH_BOOT_ID,
+                    OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITHOUT_BOOT_ID,
+                )
+                # Duo firmware/spec opcode labels disagree. As in upstream
+                # 0.2.6, use the packet length to detect the optional boot ID.
+                minimum = 16 if is_duo else _INIT_RESPONSES[opcode]
+                if len(response) < minimum:
                     raise FlicProtocolError(
                         "Truncated Flic event initialization response"
                     )
                 self._init_response_received = True
-                if opcode in (
-                    OPCODE_INIT_BUTTON_EVENTS_RESPONSE_WITH_BOOT_ID,
-                    OPCODE_INIT_BUTTON_EVENTS_DUO_RESPONSE_WITH_BOOT_ID,
+                if is_duo and len(response) >= 20:
+                    self._boot_id = struct.unpack_from("<I", response, 16)[0]
+                elif (
+                    not is_duo
+                    and opcode == OPCODE_INIT_BUTTON_EVENTS_RESPONSE_WITH_BOOT_ID
                 ):
-                    offset = _INIT_RESPONSES[opcode] - 4
-                    self._boot_id = struct.unpack_from("<I", response, offset)[0]
+                    self._boot_id = struct.unpack_from("<I", response, 12)[0]
         return response
 
     def _handle_framed_notification(self, data: bytearray) -> None:
@@ -259,7 +246,16 @@ class FlicClient(BaseFlicClient):
     def _create_session_task(self, coroutine: Coroutine[Any, Any, None]) -> None:
         task = asyncio.create_task(coroutine)
         self._session_tasks.add(task)
-        task.add_done_callback(self._session_tasks.discard)
+        task.add_done_callback(self._session_task_done)
+
+    def _run_in_background(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Track upstream ACK/position writes with our session cleanup too."""
+        self._create_session_task(coro)
+
+    def _session_task_done(self, task: asyncio.Task[None]) -> None:
+        self._session_tasks.discard(task)
+        if not task.cancelled() and (err := task.exception()) is not None:
+            _LOGGER.debug("%s: session task failed: %s", self.address, err)
 
     async def _answer_ping(self, generation: int) -> None:
         if generation != self._session_generation or self._stopped:

@@ -35,11 +35,14 @@ timeouts and retry behavior are unchanged.
 
 ## Flic 2/Duo session recovery
 
-The local client supplements pyflic-ble 0.2.5 with signed ping responses and
+The local client supplements pyflic-ble 0.2.6 with tracked signed ping responses and
 recovery when the button terminates its logical session while the BLE transport
 still reports connected. Event initialization must be acknowledged before the
 client publishes availability. Control writes share a lock with ordinary
 protocol writes and are cancelled when the transport is replaced or unloaded.
+This includes upstream event acknowledgements and Twist position resends. Idle
+disconnect is disabled by upstream; the former local packet rewrite is removed.
+Event counters, replay filtering and acknowledgements use the new upstream handlers.
 Twist keeps its upstream protocol handling.
 
 For firmware version 7 or newer, startup also sets our pairing's reconnect
